@@ -101,6 +101,7 @@ export default function ProtectedLayout({ children }) {
     { name: 'Reports', path: '/reports', icon: FileBarChart },
     { name: 'Compliance', path: '/compliance', icon: ShieldCheck },
     { name: 'Notifications', path: '/notifications', icon: Bell },
+    { name: 'Knowledge Base', path: '/knowledge-base', icon: BookMarked },
   ];
 
   const currentRoute = menuItems.find((item) => location.pathname === item.path) || { name: 'Command Center' };

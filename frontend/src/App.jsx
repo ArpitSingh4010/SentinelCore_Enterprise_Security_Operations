@@ -21,6 +21,7 @@ import Reports from './pages/Reports';
 import Playbooks from './pages/Playbooks';
 import Compliance from './pages/Compliance';
 import NotificationPrefs from './pages/NotificationPrefs';
+import KnowledgeBase from './pages/KnowledgeBase';
 
 function PublicRoute({ children }) {
   const { user, loading } = useAuth();
@@ -203,6 +204,14 @@ function App() {
               element={
                 <ProtectedRoute>
                   <NotificationPrefs />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/knowledge-base"
+              element={
+                <ProtectedRoute>
+                  <KnowledgeBase />
                 </ProtectedRoute>
               }
             />
