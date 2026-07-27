@@ -16,3 +16,9 @@ sentinel:
     email: ${SENTINEL_ADMIN_EMAIL:admin@sentinelcore.in}
     password: ${SENTINEL_ADMIN_PASSWORD:Admin@123}
     department: ${SENTINEL_ADMIN_DEPARTMENT:Security Operations}
+
+de:
+  flapdoodle:
+    mongodb:
+      embedded:
+        version: 6.0.8

@@ -19,6 +19,8 @@ import Logs from './pages/Logs';
 import ThreatIntel from './pages/ThreatIntel';
 import Reports from './pages/Reports';
 import Playbooks from './pages/Playbooks';
+import Compliance from './pages/Compliance';
+import NotificationPrefs from './pages/NotificationPrefs';
 
 function PublicRoute({ children }) {
   const { user, loading } = useAuth();
@@ -185,6 +187,22 @@ function App() {
               element={
                 <ProtectedRoute>
                   <Playbooks />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/compliance"
+              element={
+                <ProtectedRoute>
+                  <Compliance />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/notifications"
+              element={
+                <ProtectedRoute>
+                  <NotificationPrefs />
                 </ProtectedRoute>
               }
             />

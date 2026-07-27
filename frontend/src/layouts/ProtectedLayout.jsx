@@ -26,6 +26,8 @@ import {
   BookMarked,
   FileBarChart,
   BookOpen,
+  ShieldCheck,
+  Bell,
 } from 'lucide-react';
 
 export default function ProtectedLayout({ children }) {
@@ -97,6 +99,8 @@ export default function ProtectedLayout({ children }) {
     { name: 'Vulnerabilities', path: '/vulnerabilities', icon: Bug },
     { name: 'Alerts', path: '/alerts', icon: BellRing },
     { name: 'Reports', path: '/reports', icon: FileBarChart },
+    { name: 'Compliance', path: '/compliance', icon: ShieldCheck },
+    { name: 'Notifications', path: '/notifications', icon: Bell },
   ];
 
   const currentRoute = menuItems.find((item) => location.pathname === item.path) || { name: 'Command Center' };

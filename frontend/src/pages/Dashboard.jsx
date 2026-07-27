@@ -14,6 +14,10 @@ import {
   Activity,
   TrendingUp,
   Zap,
+  TrendingDown,
+  Minus,
+  AlertOctagon,
+  BarChart2,
 } from 'lucide-react';
 import {
   AreaChart,
