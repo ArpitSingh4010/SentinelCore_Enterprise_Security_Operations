@@ -1,649 +1,816 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
+import axios from 'axios';
 import {
-  AlertTriangle,
-  Bug,
-  CheckCircle2,
-  ChevronDown,
-  ChevronUp,
-  ExternalLink,
-  Filter,
-  Search,
-  Shield,
-  ShieldAlert,
-  ShieldCheck,
-  Siren,
-  X,
-  Zap,
+  Bug, ShieldAlert, CheckCircle2, AlertTriangle, AlertCircle, RefreshCw, Plus, Trash2, Edit2,
+  FolderOpen, Upload, Calendar, Clock, User, Users, Check, Layers, ChevronRight, X, ArrowUpRight,
+  TrendingUp, Download, Eye, ExternalLink, ShieldAlert as AlarmIcon
 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 import { useToast } from '../components/Toast';
 
-// ─── Severity config ──────────────────────────────────────────────────────────
-const SEVERITY_CONFIG = {
-  CRITICAL: { label: 'Critical', text: 'text-red-300',     border: 'border-red-500/25',     bg: 'bg-red-500/10',     dot: 'bg-red-400',     score: 4 },
-  HIGH:     { label: 'High',     text: 'text-orange-300',  border: 'border-orange-500/25',  bg: 'bg-orange-500/10',  dot: 'bg-orange-400',  score: 3 },
-  MEDIUM:   { label: 'Medium',   text: 'text-amber-300',   border: 'border-amber-500/25',   bg: 'bg-amber-500/10',   dot: 'bg-amber-400',   score: 2 },
-  LOW:      { label: 'Low',      text: 'text-sky-300',     border: 'border-sky-500/25',     bg: 'bg-sky-500/10',     dot: 'bg-sky-400',     score: 1 },
-  INFO:     { label: 'Info',     text: 'text-slate-300',   border: 'border-white/10',       bg: 'bg-white/5',        dot: 'bg-slate-500',   score: 0 },
-};
-
-const STATUS_CONFIG = {
-  OPEN:        { label: 'Open',        text: 'text-red-300',     border: 'border-red-500/25',     bg: 'bg-red-500/10'     },
-  IN_PROGRESS: { label: 'In Progress', text: 'text-amber-300',   border: 'border-amber-500/25',   bg: 'bg-amber-500/10'   },
-  MITIGATED:   { label: 'Mitigated',   text: 'text-emerald-300', border: 'border-emerald-500/25', bg: 'bg-emerald-500/10' },
-  ACCEPTED:    { label: 'Accepted',    text: 'text-slate-300',   border: 'border-white/10',       bg: 'bg-white/5'        },
-};
-
-// ─── Realistic mock data ──────────────────────────────────────────────────────
-const MOCK_ASSETS = [
-  { id: 'a1', name: 'PROD-DB-01',    type: 'DATABASE',   criticality: 'CRITICAL', ipAddress: '10.0.1.10' },
-  { id: 'a2', name: 'PROD-WEB-01',   type: 'SERVER',     criticality: 'HIGH',     ipAddress: '10.0.1.11' },
-  { id: 'a3', name: 'CORP-FW-01',    type: 'FIREWALL',   criticality: 'CRITICAL', ipAddress: '10.0.0.1'  },
-  { id: 'a4', name: 'WKSTN-014',     type: 'ENDPOINT',   criticality: 'MEDIUM',   ipAddress: '10.0.2.14' },
-  { id: 'a5', name: 'MGMT-SERVER',   type: 'SERVER',     criticality: 'HIGH',     ipAddress: '10.0.1.20' },
-  { id: 'a6', name: 'CORP-ROUTER-01',type: 'ROUTER',     criticality: 'HIGH',     ipAddress: '10.0.0.2'  },
+const COLUMNS = [
+  { id: 'NEW', label: 'New', color: '#ef4444', glow: 'rgba(239,68,68,0.15)', borderColor: 'rgba(239,68,68,0.25)' },
+  { id: 'ASSIGNED', label: 'Assigned', color: '#f59e0b', glow: 'rgba(245,158,11,0.15)', borderColor: 'rgba(245,158,11,0.25)' },
+  { id: 'IN_PROGRESS', label: 'In Progress', color: '#38bdf8', glow: 'rgba(56,189,248,0.15)', borderColor: 'rgba(56,189,248,0.25)' },
+  { id: 'UNDER_REVIEW', label: 'Under Review', color: '#a855f7', glow: 'rgba(168,85,247,0.15)', borderColor: 'rgba(168,85,247,0.25)' },
+  { id: 'RESOLVED', label: 'Resolved', color: '#22c55e', glow: 'rgba(34,197,94,0.15)', borderColor: 'rgba(34,197,94,0.25)' },
+  { id: 'CLOSED', label: 'Closed', color: '#6b7280', glow: 'rgba(107,114,128,0.15)', borderColor: 'rgba(107,114,128,0.25)' }
 ];
 
-const MOCK_VULNERABILITIES = [
-  {
-    id: 'v001', cveId: 'CVE-2024-21413', title: 'Microsoft Outlook RCE via RTF Attachment',
-    severity: 'CRITICAL', status: 'OPEN', cvssScore: 9.8,
-    assetId: 'a1', assetName: 'PROD-DB-01',
-    description: 'A remote code execution vulnerability exists in Microsoft Outlook when it fails to properly handle RTF files containing embedded OLE objects.',
-    affectedComponent: 'Microsoft Outlook 2016-2021', discoveredAt: new Date(Date.now() - 86400000 * 3).toISOString(),
-    remediationUrl: 'https://msrc.microsoft.com/update-guide/vulnerability/CVE-2024-21413',
-    remediation: 'Apply Microsoft Security Update KB5034763 or later. Disable automatic RTF preview in Outlook settings.',
-    dueAt: new Date(Date.now() + 86400000 * 2).toISOString(),
-  },
-  {
-    id: 'v002', cveId: 'CVE-2024-38063', title: 'Windows TCP/IP Remote Code Execution',
-    severity: 'CRITICAL', status: 'OPEN', cvssScore: 9.8,
-    assetId: 'a2', assetName: 'PROD-WEB-01',
-    description: 'An unauthenticated attacker could exploit a vulnerability in the Windows TCP/IP stack by sending specially crafted IPv6 packets.',
-    affectedComponent: 'Windows Server 2019/2022 TCP/IP Stack', discoveredAt: new Date(Date.now() - 86400000 * 1).toISOString(),
-    remediationUrl: 'https://msrc.microsoft.com/update-guide/vulnerability/CVE-2024-38063',
-    remediation: 'Apply Windows August 2024 Patch Tuesday updates. Alternatively, disable IPv6 if not required.',
-    dueAt: new Date(Date.now() + 86400000 * 1).toISOString(),
-  },
-  {
-    id: 'v003', cveId: 'CVE-2024-3400', title: 'PAN-OS OS Command Injection (CISA KEV)',
-    severity: 'CRITICAL', status: 'IN_PROGRESS', cvssScore: 10.0,
-    assetId: 'a3', assetName: 'CORP-FW-01',
-    description: 'A command injection vulnerability in the GlobalProtect feature of Palo Alto Networks PAN-OS allows an unauthenticated attacker to execute arbitrary OS commands.',
-    affectedComponent: 'PAN-OS 10.2, 11.0, 11.1 — GlobalProtect Gateway', discoveredAt: new Date(Date.now() - 86400000 * 7).toISOString(),
-    remediationUrl: 'https://security.paloaltonetworks.com/CVE-2024-3400',
-    remediation: 'Upgrade to PAN-OS 10.2.9-h1, 11.0.4-h1, or 11.1.2-h3 or later. Apply hotfix and enable Threat Prevention signatures.',
-    dueAt: new Date(Date.now() - 86400000 * 1).toISOString(),
-  },
-  {
-    id: 'v004', cveId: 'CVE-2023-44487', title: 'HTTP/2 Rapid Reset DoS Attack',
-    severity: 'HIGH', status: 'MITIGATED', cvssScore: 7.5,
-    assetId: 'a2', assetName: 'PROD-WEB-01',
-    description: 'The HTTP/2 protocol allows a denial of service because request cancellation can reset many streams quickly.',
-    affectedComponent: 'Nginx 1.25.2 and below, Apache 2.4.57 and below', discoveredAt: new Date(Date.now() - 86400000 * 21).toISOString(),
-    remediationUrl: 'https://nvd.nist.gov/vuln/detail/CVE-2023-44487',
-    remediation: 'Upgrade nginx to 1.25.3+ or Apache to 2.4.58+. Configure HTTP/2 connection and stream limits.',
-    dueAt: new Date(Date.now() + 86400000 * 30).toISOString(),
-  },
-  {
-    id: 'v005', cveId: 'CVE-2024-27198', title: 'JetBrains TeamCity Auth Bypass',
-    severity: 'HIGH', status: 'OPEN', cvssScore: 9.8,
-    assetId: 'a5', assetName: 'MGMT-SERVER',
-    description: 'Authentication bypass vulnerability in JetBrains TeamCity allows unauthenticated attackers to gain admin access via specific REST API endpoints.',
-    affectedComponent: 'JetBrains TeamCity before 2023.11.4', discoveredAt: new Date(Date.now() - 86400000 * 5).toISOString(),
-    remediationUrl: 'https://www.jetbrains.com/privacy-security/issues-fixed/CVE-2024-27198/',
-    remediation: 'Upgrade to TeamCity 2023.11.4 or later. Apply security patch plugin if upgrade is not immediately possible.',
-    dueAt: new Date(Date.now() + 86400000 * 3).toISOString(),
-  },
-  {
-    id: 'v006', cveId: 'CVE-2024-1709', title: 'ConnectWise ScreenConnect Auth Bypass',
-    severity: 'CRITICAL', status: 'OPEN', cvssScore: 10.0,
-    assetId: 'a5', assetName: 'MGMT-SERVER',
-    description: 'An authentication bypass vulnerability in ConnectWise ScreenConnect allows unauthenticated users to access ScreenConnect instances.',
-    affectedComponent: 'ScreenConnect 23.9.7 and below', discoveredAt: new Date(Date.now() - 86400000 * 2).toISOString(),
-    remediationUrl: 'https://www.connectwise.com/company/trust/security-bulletins/connectwise-screenconnect-23.9.8',
-    remediation: 'Upgrade to ScreenConnect 23.9.8 or later immediately. This is a CISA KEV tracked vulnerability.',
-    dueAt: new Date(Date.now() + 86400000 * 1).toISOString(),
-  },
-  {
-    id: 'v007', cveId: 'CVE-2024-21887', title: 'Ivanti Connect Secure Command Injection',
-    severity: 'HIGH', status: 'IN_PROGRESS', cvssScore: 9.1,
-    assetId: 'a6', assetName: 'CORP-ROUTER-01',
-    description: 'A command injection vulnerability in web components of Ivanti Connect Secure allows authenticated admins to run arbitrary commands.',
-    affectedComponent: 'Ivanti Connect Secure 9.x, 22.x', discoveredAt: new Date(Date.now() - 86400000 * 10).toISOString(),
-    remediationUrl: 'https://forums.ivanti.com/s/article/CVE-2024-21887',
-    remediation: 'Apply Ivanti security patches for affected versions. Implement workaround mitigation XML file until patch is applied.',
-    dueAt: new Date(Date.now() + 86400000 * 5).toISOString(),
-  },
-  {
-    id: 'v008', cveId: 'CVE-2023-35078', title: 'Ivanti MobileIron Auth Bypass',
-    severity: 'CRITICAL', status: 'MITIGATED', cvssScore: 10.0,
-    assetId: 'a4', assetName: 'WKSTN-014',
-    description: 'An authentication bypass vulnerability in Ivanti MobileIron (EPMM) allows unauthenticated remote actors to access specific restricted endpoints.',
-    affectedComponent: 'Ivanti EPMM before 11.10.0.2', discoveredAt: new Date(Date.now() - 86400000 * 45).toISOString(),
-    remediationUrl: 'https://forums.ivanti.com/s/article/CVE-2023-35078-Remote-Unauthenticated-API-Access-Vulnerability',
-    remediation: 'Upgrade EPMM to version 11.10.0.2 or later. Apply available patches and review access logs for exploitation indicators.',
-    dueAt: new Date(Date.now() + 86400000 * 60).toISOString(),
-  },
-  {
-    id: 'v009', cveId: 'CVE-2024-23897', title: 'Jenkins CLI Arbitrary File Read',
-    severity: 'MEDIUM', status: 'OPEN', cvssScore: 6.5,
-    assetId: 'a2', assetName: 'PROD-WEB-01',
-    description: 'Jenkins CLI feature allows unauthenticated attackers to read arbitrary files on the Jenkins controller file system.',
-    affectedComponent: 'Jenkins 2.441 and earlier, LTS 2.426.2 and earlier', discoveredAt: new Date(Date.now() - 86400000 * 8).toISOString(),
-    remediationUrl: 'https://www.jenkins.io/security/advisory/2024-01-24/',
-    remediation: 'Upgrade Jenkins to 2.442 or LTS 2.426.3. Disable CLI access if not required.',
-    dueAt: new Date(Date.now() + 86400000 * 14).toISOString(),
-  },
-  {
-    id: 'v010', cveId: 'CVE-2024-30078', title: 'Windows WiFi Driver RCE',
-    severity: 'HIGH', status: 'ACCEPTED', cvssScore: 8.8,
-    assetId: 'a4', assetName: 'WKSTN-014',
-    description: 'A remote code execution vulnerability in Windows WiFi Driver that allows an unauthenticated attacker to execute code on an affected system that has a WiFi adapter.',
-    affectedComponent: 'Windows 10/11, Windows Server 2019/2022 — WiFi Driver', discoveredAt: new Date(Date.now() - 86400000 * 14).toISOString(),
-    remediationUrl: 'https://msrc.microsoft.com/update-guide/vulnerability/CVE-2024-30078',
-    remediation: 'Apply June 2024 Patch Tuesday update. Disable WiFi adapter if system only uses wired connections.',
-    dueAt: new Date(Date.now() + 86400000 * 20).toISOString(),
-  },
-];
-
-const SEVERITIES = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO'];
-const STATUSES   = ['ALL', 'OPEN', 'IN_PROGRESS', 'MITIGATED', 'ACCEPTED'];
-
-// ─── Heatmap cell color based on severity count ───────────────────────────────
-function heatColor(count, severity) {
-  if (count === 0) return 'bg-white/3 text-slate-700';
-  const colors = {
-    CRITICAL: count >= 3 ? 'bg-red-500/80 text-white'    : count >= 2 ? 'bg-red-500/50 text-red-200'    : 'bg-red-500/25 text-red-300',
-    HIGH:     count >= 3 ? 'bg-orange-500/70 text-white' : count >= 2 ? 'bg-orange-500/45 text-orange-200' : 'bg-orange-500/20 text-orange-300',
-    MEDIUM:   count >= 3 ? 'bg-amber-500/60 text-white'  : count >= 2 ? 'bg-amber-500/40 text-amber-200'  : 'bg-amber-500/20 text-amber-300',
-    LOW:      count >= 2 ? 'bg-sky-500/40 text-sky-200'  : 'bg-sky-500/20 text-sky-300',
-    INFO:     'bg-white/8 text-slate-400',
-  };
-  return colors[severity] || 'bg-white/5 text-slate-500';
-}
-
-// ─── Sub-components ───────────────────────────────────────────────────────────
-function SeverityBadge({ severity }) {
-  const s = SEVERITY_CONFIG[severity] || SEVERITY_CONFIG.INFO;
-  return (
-    <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[9px] font-bold font-mono tracking-[0.15em] uppercase ${s.text} ${s.border} ${s.bg}`}>
-      <span className={`h-1.5 w-1.5 rounded-full ${s.dot}`} />
-      {s.label}
-    </span>
-  );
-}
-
-function StatusBadge({ status }) {
-  const s = STATUS_CONFIG[status] || STATUS_CONFIG.OPEN;
-  return (
-    <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[9px] font-bold font-mono tracking-[0.15em] uppercase ${s.text} ${s.border} ${s.bg}`}>
-      {s.label}
-    </span>
-  );
-}
-
-function CvssScore({ score }) {
-  const color = score >= 9 ? 'text-red-400' : score >= 7 ? 'text-orange-400' : score >= 4 ? 'text-amber-400' : 'text-sky-400';
-  return <span className={`font-mono font-bold text-sm ${color}`}>{score.toFixed(1)}</span>;
-}
-
-// ─── Main Page ────────────────────────────────────────────────────────────────
 export default function Vulnerabilities() {
+  const { user: currentUser } = useAuth();
   const { showToast } = useToast();
 
-  // In real deployment: fetch from GET /api/vulnerabilities
-  // For now: use mock data (backend Vulnerability model + controller not yet built)
-  const [vulns]  = useState(MOCK_VULNERABILITIES);
-  const [assets] = useState(MOCK_ASSETS);
+  const [activeTab, setActiveTab] = useState('board');
+  const [vulnerabilities, setVulnerabilities] = useState([]);
+  const [assets, setAssets] = useState([]);
+  const [usersList, setUsersList] = useState([]);
+  const [teamsList, setTeamsList] = useState([]);
+  const [patches, setPatches] = useState([]);
+  const [notifications, setNotifications] = useState([]);
+  const [stats, setStats] = useState({ totalAssets: 0, totalVulnerabilities: 0, criticalCVEs: 0, patchCompliance: 100 });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-  // Filters
-  const [search, setSearch]             = useState('');
-  const [severityFilter, setSeverityFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState('ALL');
-  const [assetFilter, setAssetFilter]   = useState('');
-
-  // Detail drawer
+  // Selected Detail Modal
   const [selectedVuln, setSelectedVuln] = useState(null);
+  const [notes, setNotes] = useState([]);
+  const [newNote, setNewNote] = useState('');
+  const [notesLoading, setNotesLoading] = useState(false);
 
-  // Heatmap expand
-  const [heatmapExpanded, setHeatmapExpanded] = useState(true);
+  // Ingestion drag drop
+  const [importText, setImportText] = useState('');
+  const [isImportOpen, setIsImportOpen] = useState(false);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [uploading, setUploading] = useState(false);
 
-  // ── Derived data ────────────────────────────────────────────────────────
-  const displayed = useMemo(() => {
-    return vulns.filter((v) => {
-      const q = search.toLowerCase();
-      const searchMatch = !q
-        || v.title?.toLowerCase().includes(q)
-        || v.cveId?.toLowerCase().includes(q)
-        || v.assetName?.toLowerCase().includes(q)
-        || v.affectedComponent?.toLowerCase().includes(q);
-      const sevMatch    = !severityFilter || v.severity === severityFilter;
-      const statusMatch = statusFilter === 'ALL' || v.status === statusFilter;
-      const assetMatch  = !assetFilter || v.assetId === assetFilter;
-      return searchMatch && sevMatch && statusMatch && assetMatch;
-    });
-  }, [vulns, search, severityFilter, statusFilter, assetFilter]);
+  // Create Manual Vulnerability Modal
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [formData, setFormData] = useState({
+    cveId: '',
+    assetId: '',
+    cvssScore: 7.5,
+    description: '',
+    affectedSoftware: '',
+    assignedToEmail: '',
+    assignedTeamId: '',
+    patchAvailability: true
+  });
+  const [formError, setFormError] = useState('');
 
-  // Summary stats
-  const stats = useMemo(() => ({
-    total:    vulns.length,
-    open:     vulns.filter((v) => v.status === 'OPEN').length,
-    critical: vulns.filter((v) => v.severity === 'CRITICAL').length,
-    overdue:  vulns.filter((v) => v.dueAt && new Date(v.dueAt) < new Date() && v.status !== 'MITIGATED' && v.status !== 'ACCEPTED').length,
-  }), [vulns]);
+  // Kanban Drag States
+  const [draggedId, setDraggedId] = useState(null);
+  const [dragOverCol, setDragOverCol] = useState(null);
 
-  // Heatmap: asset × severity → count
-  const heatmapData = useMemo(() => {
-    const map = {};
-    assets.forEach((a) => { map[a.id] = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, INFO: 0, asset: a }; });
-    vulns.forEach((v) => {
-      if (map[v.assetId] && v.status !== 'MITIGATED' && v.status !== 'ACCEPTED') {
-        map[v.assetId][v.severity] = (map[v.assetId][v.severity] || 0) + 1;
-      }
-    });
-    return Object.values(map);
-  }, [vulns, assets]);
-
-  // Relative time / overdue helper
-  const isOverdue = (dueAt, status) =>
-    dueAt && new Date(dueAt) < new Date() && !['MITIGATED', 'ACCEPTED'].includes(status);
-
-  const dueLabel = (dueAt) => {
-    if (!dueAt) return '—';
-    const diff = Math.floor((new Date(dueAt) - Date.now()) / 86400000);
-    if (diff < 0)  return `${Math.abs(diff)}d overdue`;
-    if (diff === 0) return 'Due today';
-    return `Due in ${diff}d`;
+  const fetchVulnerabilities = async () => {
+    setLoading(true);
+    try {
+      const response = await axios.get('/api/vulnerabilities');
+      setVulnerabilities(response.data || []);
+    } catch (err) {
+      console.error(err);
+      setError('Failed to fetch vulnerabilities.');
+    } finally {
+      setLoading(false);
+    }
   };
 
-  // ─────────────────────────────────────────────────────────────────────────
+  const fetchSupportData = async () => {
+    try {
+      const [assetsRes, usersRes, teamsRes, patchesRes, notifRes, statsRes] = await Promise.all([
+        axios.get('/api/assets'),
+        axios.get('/api/users?size=100'),
+        axios.get('/api/teams'),
+        axios.get('/api/vulnerabilities/patches'),
+        axios.get('/api/vulnerabilities/notifications'),
+        axios.get('/api/vulnerabilities/dashboard/stats')
+      ]);
+      setAssets(assetsRes.data || []);
+      setUsersList(usersRes.data.content || []);
+      setTeamsList(teamsRes.data || []);
+      setPatches(patchesRes.data || []);
+      setNotifications(notifRes.data || []);
+      setStats(statsRes.data || { totalAssets: 0, totalVulnerabilities: 0, criticalCVEs: 0, patchCompliance: 100 });
+    } catch (err) {
+      console.error('Failed to load support data', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchVulnerabilities();
+    fetchSupportData();
+  }, []);
+
+  const getAssetName = (assetId) => assets.find(a => a.id === assetId)?.name || 'Unknown host';
+  const getAssetIp = (assetId) => assets.find(a => a.id === assetId)?.ipAddress || '0.0.0.0';
+  const getUserName = (email) => usersList.find(u => u.email === email)?.name || email || 'Unassigned';
+  const getTeamName = (teamId) => teamsList.find(t => t.id === teamId)?.teamName || 'Unassigned';
+
+  const handleAddSubmit = async (e) => {
+    e.preventDefault();
+    setFormError('');
+    if (!formData.cveId || !formData.assetId) {
+      setFormError('CVE ID and Asset are required.');
+      return;
+    }
+    try {
+      await axios.post('/api/vulnerabilities', formData);
+      showToast({ type: 'success', message: 'Vulnerability logged and SLA created.' });
+      setShowAddModal(false);
+      setFormData({
+        cveId: '',
+        assetId: '',
+        cvssScore: 7.5,
+        description: '',
+        affectedSoftware: '',
+        assignedToEmail: '',
+        assignedTeamId: '',
+        patchAvailability: true
+      });
+      fetchVulnerabilities();
+      fetchSupportData();
+    } catch (err) {
+      setFormError(err.response?.data?.message || 'Failed to save vulnerability.');
+    }
+  };
+
+  const handleUpdateStatus = async (vulnId, newStatus) => {
+    try {
+      const vuln = vulnerabilities.find(v => v.id === vulnId);
+      if (!vuln) return;
+      await axios.put(`/api/vulnerabilities/${vulnId}`, {
+        ...vuln,
+        status: newStatus
+      });
+      showToast({ type: 'success', message: `Remediation status updated to ${newStatus}` });
+      fetchVulnerabilities();
+      fetchSupportData();
+    } catch (err) {
+      showToast({ type: 'error', message: 'Failed to update vulnerability status.' });
+    }
+  };
+
+  // Kanban Drag & Drop
+  const handleDragStart = (e, id) => {
+    e.dataTransfer.setData('text/plain', id);
+    setDraggedId(id);
+  };
+
+  const handleDragOver = (e, colId) => {
+    e.preventDefault();
+    setDragOverCol(colId);
+  };
+
+  const handleDrop = async (e, targetStatus) => {
+    e.preventDefault();
+    const id = e.dataTransfer.getData('text/plain') || draggedId;
+    if (id) {
+      await handleUpdateStatus(id, targetStatus);
+    }
+    setDraggedId(null);
+    setDragOverCol(null);
+  };
+
+  const handleSelectVuln = async (vuln) => {
+    setSelectedVuln(vuln);
+    setNotes([]);
+    setNewNote('');
+    
+    // Fetch comments
+    setNotesLoading(true);
+    try {
+      const res = await axios.get(`/api/vulnerabilities/${vuln.id}/notes`);
+      setNotes(res.data || []);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setNotesLoading(false);
+    }
+  };
+
+  const handleAddNote = async (e) => {
+    e.preventDefault();
+    if (!newNote.trim()) return;
+    try {
+      const res = await axios.post(`/api/vulnerabilities/${selectedVuln.id}/notes`, { content: newNote });
+      setNotes(prev => [...prev, res.data]);
+      setNewNote('');
+      showToast({ type: 'success', message: 'Remediation note appended.' });
+    } catch (err) {
+      showToast({ type: 'error', message: 'Failed to save note.' });
+    }
+  };
+
+  const handleImportScans = async (e) => {
+    e.preventDefault();
+    if (!importText.trim()) return;
+    setUploading(true);
+    try {
+      const parsed = JSON.parse(importText);
+      await axios.post('/api/vulnerabilities/import', parsed);
+      showToast({ type: 'success', message: 'Ingested security scans successfully.' });
+      setImportText('');
+      setIsImportOpen(false);
+      fetchVulnerabilities();
+      fetchSupportData();
+    } catch (err) {
+      showToast({ type: 'error', message: 'Ingestion parsing failure. Verify JSON syntax matches scan schema.' });
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleReadNotification = async (id) => {
+    try {
+      await axios.post(`/api/vulnerabilities/notifications/${id}/read`);
+      fetchSupportData();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeleteVuln = async (id, e) => {
+    e.stopPropagation();
+    if (!window.confirm('Delete this vulnerability instance? This will remove all SLA tracking.')) return;
+    try {
+      await axios.delete(`/api/vulnerabilities/${id}`);
+      showToast({ type: 'success', message: 'Vulnerability removed successfully.' });
+      if (selectedVuln && selectedVuln.id === id) {
+        setSelectedVuln(null);
+      }
+      fetchVulnerabilities();
+      fetchSupportData();
+    } catch (err) {
+      showToast({ type: 'error', message: 'Failed to delete record.' });
+    }
+  };
+
+  const getSeverityColor = (sev) => {
+    switch (sev?.toUpperCase()) {
+      case 'CRITICAL': return 'border-red-500/30 bg-red-500/10 text-red-400';
+      case 'HIGH': return 'border-amber-500/30 bg-amber-500/10 text-amber-400';
+      case 'MEDIUM': return 'border-sky-500/30 bg-sky-500/10 text-sky-400';
+      default: return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400';
+    }
+  };
+
+  // Group vulnerabilities by status for Kanban Board
+  const kanbanGroups = useMemo(() => {
+    const groups = { NEW: [], ASSIGNED: [], IN_PROGRESS: [], UNDER_REVIEW: [], RESOLVED: [], CLOSED: [] };
+    vulnerabilities.forEach(v => {
+      if (groups[v.status]) {
+        groups[v.status].push(v);
+      }
+    });
+    return groups;
+  }, [vulnerabilities]);
+
   return (
-    <div className="space-y-5 sc-fade-in">
-
-      {/* ── Page header ─────────────────────────────────────────────────── */}
-      <div className="sc-panel p-6">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="sc-badge border-pink-500/20 bg-pink-500/10 text-pink-300">Vulnerability Management</span>
-          <span className="sc-badge border-white/10 bg-white/5 text-slate-300">CVE Findings</span>
-          <span className="sc-badge border-amber-500/20 bg-amber-500/10 text-amber-300">⚠ Preview — Backend Pending</span>
-        </div>
-        <h1 className="mt-3 text-2xl font-extrabold tracking-tight text-white">Vulnerability Dashboard</h1>
-        <p className="mt-1 text-sm text-slate-400">
-          Track CVE findings across your asset inventory, monitor severity heatmaps, and manage remediation timelines.
-        </p>
-      </div>
-
-      {/* ── Summary stat cards ────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+    <div className="space-y-6 sc-fade-in">
+      {/* ── Stats Widget Grid ────────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         {[
-          { label: 'Total Findings', value: stats.total,    icon: Bug,          color: 'text-white',        bg: 'bg-white/5',        border: 'border-white/8'        },
-          { label: 'Open',           value: stats.open,     icon: ShieldAlert,  color: 'text-red-300',      bg: 'bg-red-500/10',     border: 'border-red-500/20'     },
-          { label: 'Critical',       value: stats.critical, icon: Zap,          color: 'text-red-300',      bg: 'bg-red-500/10',     border: 'border-red-500/20'     },
-          { label: 'Overdue',        value: stats.overdue,  icon: AlertTriangle,color: stats.overdue > 0 ? 'text-orange-300' : 'text-emerald-300', bg: stats.overdue > 0 ? 'bg-orange-500/10' : 'bg-emerald-500/10', border: stats.overdue > 0 ? 'border-orange-500/20' : 'border-emerald-500/20' },
-        ].map(({ label, value, icon: Icon, color, bg, border }) => (
-          <div key={label} className={`sc-card flex items-center justify-between p-5 ${bg} ${border}`}>
-            <div>
-              <p className="sc-text-kicker">{label}</p>
-              <h3 className={`mt-1 text-2xl font-bold ${color}`}>{value}</h3>
+          { label: 'Total Assets', value: stats.totalAssets, icon: Layers, color: 'text-primary' },
+          { label: 'Unresolved Vulnerabilities', value: vulnerabilities.filter(v => v.status !== 'RESOLVED' && v.status !== 'CLOSED').length, icon: Bug, color: 'text-red-400' },
+          { label: 'Critical CVEs', value: stats.criticalCVEs, icon: ShieldAlert, color: 'text-orange-400' },
+          { label: 'Patch Compliance', value: `${stats.patchCompliance}%`, icon: CheckCircle2, color: 'text-emerald-400' }
+        ].map((item, i) => {
+          const Icon = item.icon;
+          return (
+            <div key={i} className="sc-panel p-5 flex items-center justify-between">
+              <div className="space-y-1">
+                <p className="text-[10px] uppercase font-bold tracking-wider text-slate-500 font-mono">{item.label}</p>
+                <p className={`text-2xl font-bold font-mono ${item.color}`}>{item.value}</p>
+              </div>
+              <Icon className={`w-8 h-8 opacity-25 ${item.color}`} />
             </div>
-            <Icon className={`h-6 w-6 ${color} opacity-40`} />
-          </div>
-        ))}
+          );
+        })}
       </div>
 
-      {/* ── Severity Heatmap ──────────────────────────────────────────────── */}
-      <div className="sc-panel overflow-hidden">
-        <button
-          onClick={() => setHeatmapExpanded((v) => !v)}
-          className="c-p flex w-full items-center justify-between border-b border-white/8 bg-white/3 px-6 py-4"
-        >
-          <div className="flex items-center gap-2">
-            <ShieldAlert className="h-4 w-4 text-orange-300" />
-            <span className="text-sm font-bold text-white">Severity Heatmap per Asset</span>
-            <span className="text-[10px] font-mono text-slate-500">(open + in-progress only)</span>
-          </div>
-          {heatmapExpanded ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
-        </button>
-
-        {heatmapExpanded && (
-          <div className="overflow-x-auto p-5">
-            <table className="w-full border-collapse text-xs font-mono">
-              <thead>
-                <tr>
-                  <th className="py-3 pr-6 text-left text-[10px] uppercase tracking-[0.2em] text-slate-500 font-semibold">Asset</th>
-                  <th className="py-3 pr-4 text-[10px] uppercase tracking-[0.2em] text-slate-500 font-semibold">Criticality</th>
-                  {SEVERITIES.map((sev) => {
-                    const s = SEVERITY_CONFIG[sev];
-                    return (
-                      <th key={sev} className={`py-3 px-4 text-center text-[10px] uppercase tracking-[0.15em] font-bold ${s.text}`}>
-                        {s.label}
-                      </th>
-                    );
-                  })}
-                  <th className="py-3 pl-4 text-[10px] uppercase tracking-[0.2em] text-slate-500 font-semibold text-right">Total</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {heatmapData.map(({ asset, ...counts }) => {
-                  const total = SEVERITIES.reduce((sum, s) => sum + (counts[s] || 0), 0);
-                  return (
-                    <tr key={asset.id} className="transition-colors hover:bg-white/3">
-                      <td className="py-3.5 pr-6">
-                        <div>
-                          <p className="font-semibold text-white">{asset.name}</p>
-                          <p className="text-[10px] text-slate-500">{asset.type} · {asset.ipAddress}</p>
-                        </div>
-                      </td>
-                      <td className="py-3.5 pr-4">
-                        <SeverityBadge severity={asset.criticality} />
-                      </td>
-                      {SEVERITIES.map((sev) => {
-                        const cnt = counts[sev] || 0;
-                        return (
-                          <td key={sev} className="py-3.5 px-4 text-center">
-                            <button
-                              onClick={() => {
-                                setSeverityFilter(sev);
-                                setAssetFilter(asset.id);
-                                setStatusFilter('ALL');
-                              }}
-                              className={`c-p h-9 w-12 rounded-xl text-xs font-bold transition hover:scale-110 hover:shadow-lg ${heatColor(cnt, sev)}`}
-                              title={cnt > 0 ? `${cnt} ${sev} vuln${cnt > 1 ? 's' : ''} on ${asset.name} — click to filter` : '—'}
-                            >
-                              {cnt > 0 ? cnt : '—'}
-                            </button>
-                          </td>
-                        );
-                      })}
-                      <td className="py-3.5 pl-4 text-right">
-                        <span className={`font-bold ${total > 0 ? 'text-white' : 'text-slate-700'}`}>{total || '—'}</span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            <p className="mt-3 text-[10px] font-mono text-slate-600">
-              💡 Click any cell to filter the findings list below by that asset + severity.
-            </p>
-          </div>
-        )}
+      {/* ── Header ──────────────────────────────────────────────────────── */}
+      <div className="sc-panel p-6 flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-white font-mono uppercase">Vulnerability Control Center</h1>
+          <p className="text-sm text-slate-400">Discover, remediate, and apply security patches to protect endpoints and critical systems.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setIsImportOpen(!isImportOpen)}
+            className="flex items-center gap-2 border border-dark-border bg-slate-900/60 hover:bg-slate-800 text-slate-300 font-semibold text-xs px-4 py-2.5 rounded-xl cursor-pointer font-mono"
+          >
+            <Upload className="w-4 h-4" /> scanner upload
+          </button>
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-2 bg-primary hover:bg-primary/95 text-black font-semibold text-xs px-4 py-2.5 rounded-xl cursor-pointer"
+          >
+            <Plus className="w-4 h-4" /> Log Discovery
+          </button>
+        </div>
       </div>
 
-      {/* ── Filters ───────────────────────────────────────────────────────── */}
-      <div className="sc-panel p-4">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
-          {/* Search */}
-          <div className="relative min-w-[200px] flex-1">
-            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-            <input
-              type="text"
-              placeholder="Search CVE ID, title, asset, component..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="glass-input w-full px-4 py-2.5 pl-10 text-sm"
-            />
-            {search && (
-              <button onClick={() => setSearch('')} className="c-p absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white">
-                <X className="h-3.5 w-3.5" />
-              </button>
-            )}
-          </div>
-
-          {/* Status chips */}
-          <div className="flex flex-wrap items-center gap-2">
-            <Filter className="h-3.5 w-3.5 shrink-0 text-slate-500" />
-            {STATUSES.map((s) => (
-              <button
-                key={s}
-                onClick={() => setStatusFilter(s)}
-                className={`c-p rounded-xl border px-3 py-2 text-[10px] font-bold font-mono tracking-[0.15em] transition ${
-                  statusFilter === s
-                    ? 'border-sky-400/40 bg-sky-500/15 text-sky-300'
-                    : 'border-white/8 bg-white/5 text-slate-400 hover:border-white/15'
-                }`}
-              >
-                {s === 'ALL' ? 'All Status' : STATUS_CONFIG[s]?.label || s}
-              </button>
-            ))}
-          </div>
-
-          {/* Severity chips */}
-          <div className="flex flex-wrap gap-2">
+      {/* ── Tabs Navigation ───────────────────────────────────────────────── */}
+      <div className="flex border-b border-dark-border pb-px gap-6">
+        {[
+          { id: 'board', label: 'Remediation Board', icon: Layers },
+          { id: 'directory', label: 'Vulnerability Database', icon: Bug },
+          { id: 'patches', label: 'Patch Management', icon: CheckCircle2 },
+          { id: 'alarms', label: `Alarms & Alerts (${notifications.length})`, icon: AlarmIcon }
+        ].map((tab) => {
+          const Icon = tab.icon;
+          const active = activeTab === tab.id;
+          return (
             <button
-              onClick={() => setSeverityFilter('')}
-              className={`c-p rounded-xl border px-3 py-2 text-[10px] font-bold font-mono tracking-[0.15em] transition ${
-                !severityFilter ? 'border-sky-400/40 bg-sky-500/15 text-sky-300' : 'border-white/8 bg-white/5 text-slate-400 hover:border-white/15'
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex items-center gap-2 pb-3 text-xs font-semibold uppercase tracking-wider transition cursor-pointer ${
+                active ? 'border-b-2 border-primary text-primary' : 'text-slate-500 hover:text-slate-300'
               }`}
             >
-              All Sev
+              <Icon className="w-4 h-4" /> {tab.label}
             </button>
-            {SEVERITIES.map((sev) => {
-              const s = SEVERITY_CONFIG[sev];
-              return (
-                <button
-                  key={sev}
-                  onClick={() => setSeverityFilter(sev)}
-                  className={`c-p rounded-xl border px-3 py-2 text-[10px] font-bold font-mono tracking-[0.15em] transition ${
-                    severityFilter === sev ? `${s.border} ${s.bg} ${s.text}` : 'border-white/8 bg-white/5 text-slate-400 hover:border-white/15'
-                  }`}
-                >
-                  {s.label}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Asset filter */}
-          {assetFilter && (
-            <button
-              onClick={() => setAssetFilter('')}
-              className="c-p flex items-center gap-1.5 rounded-xl border border-purple-500/25 bg-purple-500/10 px-3 py-2 text-[10px] font-bold font-mono text-purple-300 transition hover:bg-purple-500/20"
-            >
-              <X className="h-3 w-3" />
-              {assets.find((a) => a.id === assetFilter)?.name || 'Asset'} filter
-            </button>
-          )}
-
-          <span className="shrink-0 text-[10px] font-mono text-slate-500">
-            {displayed.length} / {vulns.length}
-          </span>
-        </div>
+          );
+        })}
       </div>
 
-      {/* ── Findings Table ────────────────────────────────────────────────── */}
-      <div className="sc-panel overflow-hidden">
-        <div className="flex items-center justify-between border-b border-white/8 bg-white/3 px-6 py-3">
-          <span className="text-xs font-mono font-semibold text-slate-300">
-            CVE Findings ({displayed.length})
-          </span>
-        </div>
+      {/* ── Tab Content: Remediation Kanban Board ────────────────────────── */}
+      {activeTab === 'board' && (
+        <div className="flex gap-4 overflow-x-auto pb-4 select-none">
+          {COLUMNS.map((col) => (
+            <div
+              key={col.id}
+              onDragOver={(e) => handleDragOver(e, col.id)}
+              onDrop={(e) => handleDrop(e, col.id)}
+              className="flex min-w-[270px] w-[270px] flex-shrink-0 flex-col space-y-3"
+            >
+              {/* Column Header */}
+              <div
+                className="flex items-center justify-between rounded-xl border p-3 transition-all duration-200"
+                style={{
+                  borderColor: dragOverCol === col.id ? col.color : 'rgba(255, 255, 255, 0.06)',
+                  background: dragOverCol === col.id ? col.glow : 'rgba(22, 27, 34, 0.75)'
+                }}
+              >
+                <div className="flex items-center gap-2">
+                  <div className="h-2 w-2 rounded-full" style={{ backgroundColor: col.color, boxShadow: `0 0 6px ${col.color}` }} />
+                  <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-300">{col.label}</span>
+                </div>
+                <span className="flex h-5 w-5 items-center justify-center rounded-full text-[9px] font-bold" style={{ backgroundColor: col.glow, color: col.color }}>
+                  {kanbanGroups[col.id]?.length || 0}
+                </span>
+              </div>
 
-        {displayed.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-24 text-center">
-            <ShieldCheck className="mb-3 h-10 w-10 text-emerald-400 animate-pulse" />
-            <p className="text-sm font-mono text-slate-400">No vulnerabilities match your filters.</p>
+              {/* Cards Container */}
+              <div className="flex-1 space-y-3 min-h-[400px]">
+                {kanbanGroups[col.id]?.length === 0 ? (
+                  <div className="flex h-24 items-center justify-center rounded-xl border border-dashed border-white/5 bg-slate-900/10">
+                    <p className="text-[9px] font-mono text-slate-600">Drop cards here</p>
+                  </div>
+                ) : (
+                  kanbanGroups[col.id].map((vuln) => (
+                    <div
+                      key={vuln.id}
+                      draggable
+                      onDragStart={(e) => handleDragStart(e, vuln.id)}
+                      onClick={() => handleSelectVuln(vuln)}
+                      className="glass-card hover:bg-slate-900/60 p-4 border border-dark-border rounded-xl cursor-grab active:cursor-grabbing hover:border-slate-500/20 transition-all duration-200 space-y-2.5"
+                    >
+                      <div className="flex justify-between items-start">
+                        <span className={`sc-badge px-1.5 text-[9px] font-bold ${getSeverityColor(vuln.severity)}`}>
+                          {vuln.cveId}
+                        </span>
+                        <span className="text-[9px] font-semibold text-slate-500 font-mono">CVSS {vuln.cvssScore}</span>
+                      </div>
+                      <h4 className="text-xs font-bold text-white truncate">{getAssetName(vuln.assetId)}</h4>
+                      <p className="text-[10px] text-slate-400 font-mono truncate">{vuln.affectedSoftware}</p>
+                      
+                      <div className="flex justify-between items-center text-[9px] text-slate-500 border-t border-white/5 pt-2">
+                        <div className="flex items-center gap-1">
+                          <User className="w-3 h-3 text-slate-600" />
+                          <span>{getUserName(vuln.assignedToEmail)}</span>
+                        </div>
+                        <div className="flex items-center gap-1 font-mono">
+                          <Clock className="w-3 h-3 text-slate-600" />
+                          <span className={new Date(vuln.dueDate) < new Date() && vuln.status !== 'RESOLVED' ? 'text-red-400 font-bold' : ''}>
+                            {new Date(vuln.dueDate).toLocaleDateString()}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── Tab Content: Vulnerability Directory ────────────────────────── */}
+      {activeTab === 'directory' && (
+        <div className="sc-panel overflow-hidden">
+          <div className="p-4 border-b border-dark-border bg-slate-900/40">
+            <span className="text-xs font-bold text-slate-300 font-mono uppercase">Vulnerability Directory</span>
           </div>
-        ) : (
+
           <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
+            <table className="w-full text-left border-collapse text-slate-300 text-xs">
               <thead>
-                <tr className="border-b border-white/8 bg-white/3 text-[10px] uppercase font-mono tracking-[0.15em] text-slate-500">
-                  <th className="py-3.5 px-5">CVE ID</th>
-                  <th className="py-3.5 px-5">Title</th>
-                  <th className="py-3.5 px-5">Severity</th>
-                  <th className="py-3.5 px-5">CVSS</th>
-                  <th className="py-3.5 px-5">Asset</th>
-                  <th className="py-3.5 px-5">Status</th>
-                  <th className="py-3.5 px-5">Due</th>
-                  <th className="py-3.5 px-5 text-right">Remediation</th>
+                <tr className="border-b border-dark-border text-slate-500 uppercase text-[10px] tracking-wider font-semibold">
+                  <th className="p-4">CVE ID</th>
+                  <th className="p-4">Affected Asset</th>
+                  <th className="p-4">Software</th>
+                  <th className="p-4 text-center">CVSS Score</th>
+                  <th className="p-4">Severity</th>
+                  <th className="p-4">Remediation Status</th>
+                  <th className="p-4 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-white/5 text-xs font-mono">
-                {displayed
-                  .sort((a, b) => (SEVERITY_CONFIG[b.severity]?.score || 0) - (SEVERITY_CONFIG[a.severity]?.score || 0))
-                  .map((vuln) => {
-                    const overdue = isOverdue(vuln.dueAt, vuln.status);
-                    return (
-                      <tr
-                        key={vuln.id}
-                        onClick={() => setSelectedVuln(vuln)}
-                        className="cursor-pointer transition-colors hover:bg-white/3"
-                        style={vuln.severity === 'CRITICAL' && vuln.status === 'OPEN' ? { borderLeft: '2px solid rgba(239,68,68,0.4)' } : {}}
+              <tbody className="divide-y divide-dark-border font-mono">
+                {vulnerabilities.map((vuln) => (
+                  <tr
+                    key={vuln.id}
+                    onClick={() => handleSelectVuln(vuln)}
+                    className="hover:bg-white/3 transition cursor-pointer"
+                  >
+                    <td className="p-4 font-bold text-primary">{vuln.cveId}</td>
+                    <td className="p-4 text-white font-semibold">
+                      <div>{getAssetName(vuln.assetId)}</div>
+                      <div className="text-[10px] text-slate-500">{getAssetIp(vuln.assetId)}</div>
+                    </td>
+                    <td className="p-4 text-slate-400 font-medium">{vuln.affectedSoftware}</td>
+                    <td className="p-4 text-center font-bold text-slate-200">{vuln.cvssScore}</td>
+                    <td className="p-4">
+                      <span className={`inline-flex rounded-full border px-2 py-0.5 text-[9px] font-bold ${getSeverityColor(vuln.severity)}`}>
+                        {vuln.severity}
+                      </span>
+                    </td>
+                    <td className="p-4">
+                      <span className="text-[10px] font-bold text-slate-300 bg-white/5 border border-white/10 rounded px-1.5 py-0.5 uppercase">
+                        {vuln.status}
+                      </span>
+                    </td>
+                    <td className="p-4 text-right" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        onClick={(e) => handleDeleteVuln(vuln.id, e)}
+                        className="p-1.5 rounded-lg border border-dark-border bg-slate-900 hover:border-red-500/30 hover:bg-red-500/10 text-slate-500 hover:text-red-400 transition cursor-pointer"
                       >
-                        <td className="py-4 px-5">
-                          <span className="font-semibold text-sky-300">{vuln.cveId}</span>
-                        </td>
-                        <td className="py-4 px-5 max-w-[220px]">
-                          <p className="font-semibold text-white truncate">{vuln.title}</p>
-                          <p className="text-[10px] text-slate-500 truncate mt-0.5">{vuln.affectedComponent}</p>
-                        </td>
-                        <td className="py-4 px-5">
-                          <SeverityBadge severity={vuln.severity} />
-                        </td>
-                        <td className="py-4 px-5">
-                          <CvssScore score={vuln.cvssScore} />
-                        </td>
-                        <td className="py-4 px-5">
-                          <p className="font-semibold text-slate-200">{vuln.assetName}</p>
-                        </td>
-                        <td className="py-4 px-5">
-                          <StatusBadge status={vuln.status} />
-                        </td>
-                        <td className="py-4 px-5">
-                          <span className={`text-[10px] font-bold ${overdue ? 'text-red-400' : 'text-slate-400'}`}>
-                            {dueLabel(vuln.dueAt)}
-                          </span>
-                        </td>
-                        <td className="py-4 px-5 text-right" onClick={(e) => e.stopPropagation()}>
-                          <a
-                            href={vuln.remediationUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="c-p inline-flex items-center gap-1 rounded-lg border border-sky-500/20 bg-sky-500/10 px-2.5 py-1.5 text-[10px] font-bold text-sky-300 transition hover:bg-sky-500/25"
-                            title="Open NVD / vendor advisory"
-                          >
-                            <ExternalLink className="h-3 w-3" />
-                            Advisory
-                          </a>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* ── Detail Drawer ─────────────────────────────────────────────────── */}
-      {selectedVuln && (
-        <div className="fixed inset-0 z-50 flex">
-          <div className="flex-1 bg-black/50 backdrop-blur-sm" onClick={() => setSelectedVuln(null)} />
-          <div
-            className="w-full max-w-lg overflow-y-auto border-l border-white/8 bg-[#0b1220] sc-scale-in"
-            style={{ boxShadow: '-24px 0 60px rgba(0,0,0,0.4)' }}
-          >
-            {/* Accent bar — coloured by severity */}
-            <div
-              className="h-1 w-full"
-              style={{
-                background: `linear-gradient(90deg, ${
-                  selectedVuln.severity === 'CRITICAL' ? '#ef4444'
-                  : selectedVuln.severity === 'HIGH'   ? '#f97316'
-                  : selectedVuln.severity === 'MEDIUM' ? '#f59e0b'
-                  : '#38bdf8'
-                }, transparent)`,
-              }}
-            />
+      {/* ── Tab Content: Patch Management ───────────────────────────────── */}
+      {activeTab === 'patches' && (
+        <div className="sc-panel overflow-hidden">
+          <div className="p-4 border-b border-dark-border bg-slate-900/40">
+            <span className="text-xs font-bold text-slate-300 font-mono uppercase">Missing Patches & Advisories</span>
+          </div>
 
-            <div className="space-y-5 p-6">
-              {/* Header */}
-              <div className="flex items-start justify-between gap-4">
-                <div className="min-w-0 flex-1">
-                  <div className="mb-2 flex flex-wrap items-center gap-2">
-                    <SeverityBadge severity={selectedVuln.severity} />
-                    <StatusBadge status={selectedVuln.status} />
-                    {isOverdue(selectedVuln.dueAt, selectedVuln.status) && (
-                      <span className="inline-flex items-center gap-1 rounded-full border border-red-500/25 bg-red-500/10 px-2 py-0.5 text-[9px] font-bold text-red-300">
-                        <AlertTriangle className="h-2.5 w-2.5" /> OVERDUE
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse text-slate-300 text-xs">
+              <thead>
+                <tr className="border-b border-dark-border text-slate-500 uppercase text-[10px] tracking-wider font-semibold">
+                  <th className="p-4">CVE ID</th>
+                  <th className="p-4">Patch Ref</th>
+                  <th className="p-4">Vendor</th>
+                  <th className="p-4">Target Product</th>
+                  <th className="p-4">Fixed Version</th>
+                  <th className="p-4">Status</th>
+                  <th className="p-4 text-right">Download</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-dark-border font-mono">
+                {patches.map((patch) => (
+                  <tr key={patch.id} className="hover:bg-white/3 transition">
+                    <td className="p-4 font-bold text-slate-200">{patch.cveId}</td>
+                    <td className="p-4 text-white font-bold">{patch.patchId}</td>
+                    <td className="p-4 text-slate-400">{patch.vendor}</td>
+                    <td className="p-4 text-slate-300 font-semibold">{patch.affectedProduct}</td>
+                    <td className="p-4 text-emerald-400 font-semibold">{patch.fixedVersion}</td>
+                    <td className="p-4">
+                      <span className={`inline-flex rounded-full border px-2 py-0.5 text-[9px] font-bold ${
+                        patch.status === 'DEPLOYED' ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-300' : 'border-amber-500/25 bg-amber-500/10 text-amber-300'
+                      }`}>
+                        {patch.status}
                       </span>
-                    )}
-                  </div>
-                  <h2 className="text-base font-bold leading-snug text-white">{selectedVuln.title}</h2>
-                  <a
-                    href={selectedVuln.remediationUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mt-1 inline-flex items-center gap-1 text-[10px] font-mono text-sky-400 hover:text-sky-300 transition"
-                  >
-                    {selectedVuln.cveId} <ExternalLink className="h-2.5 w-2.5" />
-                  </a>
-                </div>
-                <button onClick={() => setSelectedVuln(null)} className="c-p mt-1 text-slate-400 transition hover:text-white">
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-
-              {/* CVSS + meta */}
-              <div className="grid grid-cols-2 gap-3">
-                {[
-                  { label: 'CVSS Score',    value: <CvssScore score={selectedVuln.cvssScore} /> },
-                  { label: 'Asset',         value: <span className="font-semibold text-slate-200">{selectedVuln.assetName}</span> },
-                  { label: 'Discovered',    value: new Date(selectedVuln.discoveredAt).toLocaleDateString() },
-                  { label: 'Due Date',      value: <span className={isOverdue(selectedVuln.dueAt, selectedVuln.status) ? 'text-red-400 font-bold' : 'text-slate-200'}>{dueLabel(selectedVuln.dueAt)}</span> },
-                ].map(({ label, value }) => (
-                  <div key={label} className="rounded-xl border border-white/8 bg-white/5 p-3">
-                    <p className="mb-1 text-[9px] font-semibold uppercase tracking-[0.2em] text-slate-500">{label}</p>
-                    <div className="text-xs font-mono">{value}</div>
-                  </div>
+                    </td>
+                    <td className="p-4 text-right">
+                      <a
+                        href={patch.downloadUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-[10px] font-bold text-primary hover:underline"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" /> Source
+                      </a>
+                    </td>
+                  </tr>
                 ))}
-              </div>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
-              {/* Affected component */}
-              <div>
-                <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-500">Affected Component</p>
-                <p className="rounded-xl border border-white/8 bg-white/5 p-3 text-xs font-mono text-slate-300">{selectedVuln.affectedComponent}</p>
-              </div>
-
-              {/* Description */}
-              <div>
-                <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-500">Description</p>
-                <p className="rounded-xl border border-white/8 bg-white/5 p-3 text-xs leading-relaxed text-slate-300">{selectedVuln.description}</p>
-              </div>
-
-              {/* Remediation */}
-              <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/8 p-4">
-                <div className="mb-2 flex items-center gap-2">
-                  <Shield className="h-4 w-4 text-emerald-400" />
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-emerald-400">Remediation Steps</p>
+      {/* ── Tab Content: Alarms & Notifications ─────────────────────────── */}
+      {activeTab === 'alarms' && (
+        <div className="space-y-4">
+          <div className="sc-panel p-4">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 font-mono mb-2">Unread Security Alarms</h3>
+            <div className="divide-y divide-dark-border space-y-3 pt-2">
+              {notifications.length === 0 ? (
+                <div className="text-center py-10">
+                  <CheckCircle2 className="w-10 h-10 text-emerald-400/60 mx-auto mb-2" />
+                  <p className="text-xs text-slate-500 font-mono">No critical security alarms pending review.</p>
                 </div>
-                <p className="text-xs leading-relaxed text-slate-300">{selectedVuln.remediation}</p>
-                <a
-                  href={selectedVuln.remediationUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="c-p mt-3 inline-flex items-center gap-2 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-300 transition hover:bg-emerald-500/20"
-                >
-                  <ExternalLink className="h-3.5 w-3.5" />
-                  Open Official Advisory / Patch Notes
-                </a>
+              ) : (
+                notifications.map((notif) => (
+                  <div key={notif.id} className="flex justify-between items-start py-3 text-xs font-mono">
+                    <div className="flex gap-3 items-start">
+                      <AlarmIcon className="w-5 h-5 text-red-400 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <h4 className="font-bold text-white">{notif.title}</h4>
+                        <p className="text-slate-400 text-[11px] mt-0.5">{notif.message}</p>
+                        <span className="text-[9px] text-slate-500">{new Date(notif.createdAt).toLocaleString()}</span>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleReadNotification(notif.id)}
+                      className="sc-button-secondary py-1 px-2.5 font-bold text-[10px] cursor-pointer"
+                    >
+                      Acknowledge
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Detail Drawer ────────────────────────────────────────────────── */}
+      {selectedVuln && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="glass-card sc-scale-in max-w-lg w-full border border-dark-border p-6 space-y-6">
+            <div className="flex justify-between items-start border-b border-dark-border pb-4">
+              <div>
+                <span className={`sc-badge px-1.5 text-[9px] font-bold ${getSeverityColor(selectedVuln.severity)}`}>
+                  {selectedVuln.cveId}
+                </span>
+                <h2 className="text-base font-bold text-white mt-1">Remediation Task Detail</h2>
+                <p className="text-[10px] text-slate-500 font-mono">Target: {getAssetName(selectedVuln.assetId)} ({getAssetIp(selectedVuln.assetId)})</p>
+              </div>
+              <button onClick={() => setSelectedVuln(null)} className="text-slate-500 hover:text-slate-300">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs font-mono">
+              <div className="p-3.5 rounded-xl border border-white/5 bg-white/3 space-y-2">
+                <h4 className="text-slate-400 uppercase text-[9px] tracking-wider">Description</h4>
+                <p className="text-slate-200 leading-relaxed font-sans">{selectedVuln.description}</p>
               </div>
 
-              {/* Escalate to incident */}
-              <div className="border-t border-white/8 pt-3">
-                <button
-                  onClick={() => {
-                    showToast({ type: 'success', message: `Vulnerability ${selectedVuln.cveId} escalated to Incident queue.` });
-                    setSelectedVuln(null);
-                  }}
-                  className="c-p sc-button-primary w-full px-4 py-2.5 text-xs font-semibold"
-                >
-                  <Siren className="h-3.5 w-3.5" />
-                  Escalate to Incident Ticket
-                </button>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <span className="text-slate-500">CVSS Base Score:</span>
+                  <span className="text-white font-bold block">{selectedVuln.cvssScore} / 10.0</span>
+                </div>
+                <div className="space-y-1">
+                  <span className="text-slate-500">Remediation SLA:</span>
+                  <span className="text-white font-bold block">{new Date(selectedVuln.dueDate).toLocaleDateString()}</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 border-t border-white/5 pt-3">
+                <div className="space-y-1">
+                  <span className="text-slate-500 block">Assigned Analyst</span>
+                  <span className="text-slate-200 font-bold block">{getUserName(selectedVuln.assignedToEmail)}</span>
+                </div>
+                <div className="space-y-1">
+                  <span className="text-slate-500 block">Responsible Team</span>
+                  <span className="text-slate-200 font-bold block">{getTeamName(selectedVuln.assignedTeamId)}</span>
+                </div>
               </div>
             </div>
+
+            {/* Notes Section */}
+            <div className="border-t border-dark-border pt-4 space-y-3">
+              <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider font-mono">Remediation Log</h3>
+              
+              <div className="max-h-[140px] overflow-y-auto space-y-2 pr-1">
+                {notesLoading ? (
+                  <RefreshCw className="w-4 h-4 animate-spin text-slate-500 mx-auto" />
+                ) : notes.length === 0 ? (
+                  <p className="text-[10px] text-slate-600 font-mono text-center">No action comments registered.</p>
+                ) : (
+                  notes.map((note) => (
+                    <div key={note.id} className="p-2.5 rounded-xl border border-dark-border bg-slate-950/50 text-[11px] space-y-1">
+                      <div className="flex justify-between text-[9px] font-mono text-slate-500">
+                        <span className="font-semibold text-primary">{note.authorName}</span>
+                        <span>{new Date(note.createdAt).toLocaleTimeString()}</span>
+                      </div>
+                      <p className="text-slate-300 font-mono">{note.content}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <form onSubmit={handleAddNote} className="flex gap-1.5 pt-1">
+                <input
+                  type="text"
+                  value={newNote}
+                  onChange={(e) => setNewNote(e.target.value)}
+                  placeholder="Add status update note..."
+                  className="sc-input text-xs flex-1"
+                />
+                <button type="submit" className="sc-button bg-primary text-black text-xs font-bold px-3 py-2.5">
+                  Log
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Scanner Import Ingestion Modal ───────────────────────────────── */}
+      {isImportOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="glass-card sc-scale-in max-w-lg w-full border border-dark-border p-6 space-y-4">
+            <div className="flex justify-between items-center border-b border-dark-border pb-3">
+              <h2 className="text-base font-bold uppercase tracking-wider text-white">Scanner Report Ingest</h2>
+              <button onClick={() => setIsImportOpen(false)} className="text-slate-500 hover:text-slate-300">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleImportScans} className="space-y-4 text-xs font-mono">
+              <div className="space-y-1.5">
+                <label className="text-slate-400">Scanner Ingestion JSON Payload</label>
+                <textarea
+                  value={importText}
+                  onChange={(e) => setImportText(e.target.value)}
+                  placeholder={'[\n  {\n    "cveId": "CVE-2023-38606",\n    "affectedSoftware": "macOS Ventura",\n    "assignedToEmail": "subhas@sentinelcore.in"\n  }\n]'}
+                  rows={6}
+                  className="sc-input w-full font-mono text-xs"
+                />
+              </div>
+
+              <div className="flex gap-2 justify-end border-t border-dark-border pt-4">
+                <button
+                  type="button"
+                  onClick={() => setIsImportOpen(false)}
+                  className="sc-button-secondary py-2 px-4 font-mono"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={uploading}
+                  className="sc-button bg-primary text-black font-semibold py-2 px-4 flex items-center gap-2 font-mono"
+                >
+                  {uploading && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                  Ingest Findings
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Add Manual Discovery Modal ────────────────────────────────────── */}
+      {showAddModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="glass-card sc-scale-in max-w-lg w-full border border-dark-border p-6 space-y-4">
+            <div className="flex justify-between items-center border-b border-dark-border pb-3">
+              <h2 className="text-base font-bold uppercase tracking-wider text-white">Log Discovered Vulnerability</h2>
+              <button onClick={() => setShowAddModal(false)} className="text-slate-500 hover:text-slate-300">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {formError && (
+              <div className="p-3 rounded-xl border border-red-500/20 bg-red-500/8 text-red-400 text-xs font-semibold flex items-center gap-2">
+                <AlertCircle className="w-4 h-4" />
+                <span>{formError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleAddSubmit} className="space-y-4 text-xs font-mono">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-slate-400">CVE ID</label>
+                  <input
+                    type="text"
+                    value={formData.cveId}
+                    onChange={(e) => setFormData({ ...formData, cveId: e.target.value })}
+                    placeholder="CVE-2023-38606"
+                    className="sc-input w-full font-mono"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-slate-400">Target Asset</label>
+                  <select
+                    value={formData.assetId}
+                    onChange={(e) => setFormData({ ...formData, assetId: e.target.value })}
+                    className="sc-select w-full"
+                  >
+                    <option value="">Select Asset...</option>
+                    {assets.map(a => (
+                      <option key={a.id} value={a.id}>{a.name} ({a.ipAddress})</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-slate-400">CVSS Base Score</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    max="10"
+                    value={formData.cvssScore}
+                    onChange={(e) => setFormData({ ...formData, cvssScore: parseFloat(e.target.value) })}
+                    className="sc-input w-full"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-slate-400">Affected Software / Service</label>
+                  <input
+                    type="text"
+                    value={formData.affectedSoftware}
+                    onChange={(e) => setFormData({ ...formData, affectedSoftware: e.target.value })}
+                    placeholder="Apache Web Server 2.4"
+                    className="sc-input w-full"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-slate-400">Discovery Vulnerability Description</label>
+                <input
+                  type="text"
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  placeholder="Explain security risk matching vector..."
+                  className="sc-input w-full"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-slate-400">Assigned Analyst</label>
+                  <select
+                    value={formData.assignedToEmail}
+                    onChange={(e) => setFormData({ ...formData, assignedToEmail: e.target.value })}
+                    className="sc-select w-full"
+                  >
+                    <option value="">Unassigned</option>
+                    {usersList.map(usr => (
+                      <option key={usr.id} value={usr.email}>{usr.name} ({usr.email})</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-slate-400">Responsible Team</label>
+                  <select
+                    value={formData.assignedTeamId}
+                    onChange={(e) => setFormData({ ...formData, assignedTeamId: e.target.value })}
+                    className="sc-select w-full"
+                  >
+                    <option value="">Select Team...</option>
+                    {teamsList.map(t => (
+                      <option key={t.id} value={t.id}>{t.teamName}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex gap-2 justify-end border-t border-dark-border pt-4">
+                <button
+                  type="button"
+                  onClick={() => setShowAddModal(false)}
+                  className="sc-button-secondary py-2 px-4"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="sc-button bg-primary text-black font-semibold py-2 px-4"
+                >
+                  Create Ticket
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
