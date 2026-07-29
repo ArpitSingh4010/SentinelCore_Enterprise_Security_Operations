@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Navigate, Link, useLocation } from 'react-router-dom';
+import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import ChatBot from '../components/ChatBot';
 import {
@@ -18,15 +19,18 @@ import {
   FileWarning,
   ShieldAlert,
   Radar,
-  BellDotIcon,
   BellRing,
   Bug,
   Siren,
   X,
+  Bell,
   Server,
   FileText,
   BookMarked,
   FileBarChart,
+  ShieldCheck,
+  BellDotIcon,
+  BookOpen,
 } from 'lucide-react';
 
 export default function ProtectedLayout({ children }) {
@@ -39,6 +43,8 @@ export default function ProtectedLayout({ children }) {
     return false;
   });
   const [isScrolled, setIsScrolled] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const [showNotifications, setShowNotifications] = useState(false);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -62,6 +68,23 @@ export default function ProtectedLayout({ children }) {
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  useEffect(() => {
+    if (!user) return undefined;
+
+    const fetchNotifications = async () => {
+      try {
+        const response = await axios.get('/api/notifications');
+        setNotifications(Array.isArray(response.data) ? response.data : []);
+      } catch (err) {
+        console.error('Failed to fetch notifications', err);
+      }
+    };
+
+    fetchNotifications();
+    const intervalId = window.setInterval(fetchNotifications, 30000);
+    return () => window.clearInterval(intervalId);
+  }, [user]);
 
   if (loading) {
     return (
@@ -87,20 +110,30 @@ export default function ProtectedLayout({ children }) {
     { name: 'Users', path: '/users', icon: Users },
     { name: 'Teams', path: '/teams', icon: Network },
     { name: 'Assets', path: '/assets', icon: Server },
-    { name: 'Incidents', path: '/incidents', icon: Siren },
     { name: 'Threat Intel', path: '/threat-intel', icon: Radar },
+    { name: 'Incidents', path: '/incidents', icon: Siren },
     ...(user?.role === 'ADMIN' || user?.role === 'ANALYST'
-      ? [{ name: 'Audit Logs', path: '/audit-logs', icon: ScrollText }]
+      ? [{ name: 'Audit Trails', path: '/audit-logs', icon: ScrollText }]
       : []),
 
     { name: 'Log Explorer', path: '/logs', icon: FileText },
     { name: 'Alerts', path: '/alerts', icon: BellRing },
     { name: 'Vulnerabilities', path: '/vulnerabilities', icon: Bug },
+    { name: 'Compliance', path: '/compliance', icon: ShieldCheck },
+    { name: 'Playbooks', path: '/playbooks', icon: BookOpen },
     { name: 'Reports', path: '/reports', icon: FileBarChart },
+    { name: 'Notifications', path: '/notifications', icon: Bell },
+    { name: 'Knowledge Base', path: '/knowledge-base', icon: BookMarked },
   ];
-
   const currentRoute = menuItems.find((item) => location.pathname === item.path) || { name: 'Command Center' };
   const userInitial = (user?.name || user?.email || 'S').charAt(0).toUpperCase();
+  const criticalNotificationCount = notifications.filter((item) => item.severity === 'CRITICAL').length;
+  const severityClasses = {
+    CRITICAL: 'border-red-500/25 bg-red-500/10 text-red-300',
+    HIGH: 'border-orange-500/25 bg-orange-500/10 text-orange-300',
+    MEDIUM: 'border-amber-500/25 bg-amber-500/10 text-amber-300',
+    LOW: 'border-emerald-500/25 bg-emerald-500/10 text-emerald-300',
+  };
 
   return (
     <div className="min-h-screen sc-shell text-slate-100 lg:flex lg:gap-6 lg:p-6">
@@ -182,7 +215,7 @@ export default function ProtectedLayout({ children }) {
                     <p className="truncate text-base font-semibold text-white">{user.name}</p>
                     <BadgeCheck className="h-3.5 w-3.5 text-emerald-300" />
                   </div>
-                  <p className="text-xs text-green-500">Sentinel Core Version V2.0</p>
+                  <p className="text-xs text-green-500">Sentinel Core Version V3.0</p>
                   <div className="mt-1 flex flex-wrap items-center gap-2">
                     <span className="sc-badge border-emerald-500/20 bg-emerald-500/10 text-emerald-300">{user.role}</span>
                     <span className="inline-flex items-center gap-1 text-xs text-slate-400">
@@ -194,7 +227,7 @@ export default function ProtectedLayout({ children }) {
               </div>
             </div>
           )}
-          <button onClick={logout} className={`sc-button-danger w-full px-4 py-3 text-sm font-semibold ${isCollapsed ? 'justify-center' : 'justify-start'}`}>
+          <button onClick={logout} className={`cursor-pointer sc-button-danger w-full px-4 py-3 text-sm font-semibold ${isCollapsed ? 'justify-center' : 'justify-start'}`}>
             <LogOut className="h-4 w-4" />
             {!isCollapsed && <span>Logout</span>}
           </button>
@@ -219,8 +252,6 @@ export default function ProtectedLayout({ children }) {
               <div className="space-y-2">
                 <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.28em] text-slate-400">
                   <span>Command center</span>
-                  <ChevronRight className="h-3 w-3" />
-                  <span>{currentRoute.name}</span>
                 </div>
                 <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">{currentRoute.name}</h1>
                 <div className="flex flex-wrap items-center gap-2 text-sm text-slate-400">
@@ -229,15 +260,64 @@ export default function ProtectedLayout({ children }) {
                   <span>{currentRoute.name}</span>
                 </div>
               </div>
-
             </div>
-
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/8 pt-4 text-xs text-slate-400">
               <div className="flex flex-wrap items-center gap-2">
-                <BellDotIcon className='text-danger h-7 w-10 cursor-pointer' />
-                <span className="sc-badge border-emerald-500/20 bg-emerald-500/10 text-emerald-300">ONLINE</span>
-                <span className="sc-badge border-white/10 bg-white/5 text-slate-300">{user.role}</span>
-                <span className="sc-badge border-white/10 bg-white/5 text-slate-300">{user.department}</span>
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setShowNotifications((value) => !value)}
+                    className="relative rounded-xl border border-white/10 bg-white/5 p-2 text-slate-300 transition hover:border-red-400/30 hover:text-white"
+                    aria-label="Show notifications"
+                  >
+                    <BellDotIcon className="h-5 w-5 text-red-300" />
+                    {notifications.length > 0 && (
+                      <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-bold text-white">
+                        {notifications.length > 9 ? '9+' : notifications.length}
+                      </span>
+                    )}
+                  </button>
+                  {showNotifications && (
+                    <div className="absolute left-0 top-full z-40 mt-2 w-[min(92vw,24rem)] overflow-hidden rounded-2xl border border-white/10 bg-[#0b1220] shadow-2xl shadow-black/40 xl:left-auto xl:right-0">
+                      <div className="flex items-center justify-between border-b border-white/8 px-4 py-3">
+                        <div>
+                          <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">Notifications</p>
+                          <p className="mt-0.5 text-xs text-slate-300">{criticalNotificationCount} critical / {notifications.length} total</p>
+                        </div>
+                        <Bell className="h-4 w-4 text-sky-300" />
+                      </div>
+                      <div className="max-h-96 overflow-y-auto p-2">
+                        {notifications.length === 0 ? (
+                          <div className="px-4 py-8 text-center text-xs text-slate-500">No active high priority notifications.</div>
+                        ) : (
+                          notifications.map((item) => (
+                            <div key={item.id} className="rounded-xl border border-white/6 bg-white/3 p-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <p className="text-sm font-semibold text-white">{item.title}</p>
+                                <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[9px] font-bold ${severityClasses[item.severity] ?? severityClasses.MEDIUM}`}>
+                                  {item.severity ?? 'MEDIUM'}
+                                </span>
+                              </div>
+                              <p className="mt-1 line-clamp-2 text-xs text-slate-400">{item.message}</p>
+                              <div className="mt-2 flex items-center justify-between gap-2 text-[10px] font-mono text-slate-600">
+                                <span>{item.source ?? 'SYSTEM'}</span>
+                                <span>{item.createdAt ? new Date(item.createdAt).toLocaleString() : ''}</span>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                      <Link
+                        to="/notifications"
+                        onClick={() => setShowNotifications(false)}
+                        className="block border-t border-white/8 px-4 py-3 text-center text-xs font-semibold text-sky-300 transition hover:bg-white/5"
+                      >
+                        Configure notification rules
+                      </Link>
+                    </div>
+                  )}
+                </div>
+                <span className="sc-badge border-white/10 bg-white/5 text-slate-300">Department: {user.department}</span>
               </div>
               <div className="flex items-center gap-2">
                 <div className="flex items-center gap-2 rounded-full border border-white/8 bg-white/5 px-3 py-1.5">
@@ -258,6 +338,7 @@ export default function ProtectedLayout({ children }) {
           <div className="mx-auto w-full max-w-[1700px]">{children}</div>
         </main>
       </div>
+
       <ChatBot />
     </div>
   );
