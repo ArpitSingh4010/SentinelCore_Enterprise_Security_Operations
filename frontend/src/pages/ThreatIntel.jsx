@@ -147,6 +147,10 @@ export default function ThreatIntel() {
 
   useEffect(() => {
     fetchIocs();
+  }, [page, filterType]);
+
+  useEffect(() => {
+    fetchFeeds();
     fetchTeams();
   }, []);
 
