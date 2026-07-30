@@ -74,12 +74,13 @@ APP_OPERATIONS = [
         "answer": (
             "Threat Intel stores indicators of compromise such as suspicious IPs, domains, hashes, and malware references. "
             "It helps analysts connect logs and incidents with known threats."
+            "It checks the audit trails if find anything malware then block the IP, URL, DOMAINS automatically ."
         ),
     },
     {
-        "name": "Audit Logs",
+        "name": "Audit Trails",
         "route": "/audit-logs",
-        "keywords": ["audit", "audit logs", "activity", "history", "trace", "compliance"],
+        "keywords": ["audit", "audit logs", "activity", "history", "trace","trails"],
         "answer": (
             "Audit Logs records important user and system actions. It is mainly for admins and analysts who need "
             "traceability, compliance evidence, and investigation history."
@@ -104,12 +105,20 @@ APP_OPERATIONS = [
         ),
     },
     {
-        "name": "Alerts",
+        "name": "Alerts Management",
         "route": "/alerts",
         "keywords": ["alert", "alerts", "notification", "warning", "triaged"],
         "answer": (
-            "Alerts shows security warnings that need attention. Operators can review alert status, identify urgent events, "
+            "Alerts Management shows security warnings that need attention. Operators can review alert status, identify urgent events, "
             "and decide whether an alert should become an incident."
+        ),
+    },
+        {
+        "name": "Playbooks",
+        "route": "/playbooks",
+        "keywords": ["list", "notebook", "book", "playbook"],
+        "answer": (
+            "Playbook shows the Secuence of operations , simulations. "
         ),
     },
     {
@@ -119,6 +128,14 @@ APP_OPERATIONS = [
         "answer": (
             "Reports summarizes security operations for review. It is useful for management updates, trend analysis, "
             "and documenting incident, asset, alert, and threat activity."
+        ),
+    },
+        {
+        "name": "Notifications",
+        "route": "/notifications",
+        "keywords": ["notifications", "alerts", "warning"],
+        "answer": (
+            "Notifications helps users to detect issues without checking manually."
         ),
     },
     {
@@ -225,11 +242,11 @@ def find_best_answer(message):
 
     if not best_operation:
         if any(word in message_text for word in ["help", "menu", "modules", "features", "operation", "operations"]):
-            module_list = ", ".join(f"{item['name']} ({item['route']})" for item in APP_OPERATIONS)
+            module_list = ", ".join(f"{item['name']} " for item in APP_OPERATIONS)
             return f"Sentinel Core modules are: {module_list}. Ask me about one module for details."
         return DEFAULT_ANSWER
 
-    return f"{best_operation['answer']} Open it from {best_operation['route']}."
+    return f"{best_operation['answer']} Open it from {best_operation['name']}."
 
 
 class ChatbotHandler(BaseHTTPRequestHandler):
