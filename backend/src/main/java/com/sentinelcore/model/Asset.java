@@ -26,6 +26,7 @@ public class Asset {
     private String criticality;
     private String status;
     private String ownerTeamId;
+    private Integer riskScore;
     private LocalDateTime lastSeen;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

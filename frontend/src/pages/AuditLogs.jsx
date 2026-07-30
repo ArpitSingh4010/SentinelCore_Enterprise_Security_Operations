@@ -73,7 +73,7 @@ export default function AuditLogs() {
             <span className="sc-badge border-sky-500/20 bg-sky-500/10 text-sky-300">Audit trail</span>
             <span className="sc-badge border-white/10 bg-white/5 text-slate-300">{user?.role} scope</span>
           </div>
-          <h1 className="mt-3 text-2xl font-extrabold tracking-tight text-white">Audit Logs</h1>
+          <h1 className="mt-3 text-2xl font-extrabold tracking-tight text-white">Audit Trails</h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-400">
             Review authentication, user, and team activity recorded by the backend audit service.
           </p>

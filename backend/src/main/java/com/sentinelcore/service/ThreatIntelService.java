@@ -120,6 +120,53 @@ public class ThreatIntelService {
         return saved;
     }
 
+    public int uploadIocs(org.springframework.web.multipart.MultipartFile file, String currentUserEmail) {
+        if (file == null || file.isEmpty()) {
+            throw new BadRequestException("Uploaded file is empty.");
+        }
+        int count = 0;
+        try (java.io.BufferedReader reader = new java.io.BufferedReader(
+                new java.io.InputStreamReader(file.getInputStream(), java.nio.charset.StandardCharsets.UTF_8))) {
+            String line;
+            boolean isHeader = true;
+            while ((line = reader.readLine()) != null) {
+                if (!StringUtils.hasText(line)) continue;
+                String[] parts = line.split(",");
+                if (isHeader && (line.toLowerCase().contains("type") || line.toLowerCase().contains("value"))) {
+                    isHeader = false;
+                    continue;
+                }
+                isHeader = false;
+
+                String type = parts.length > 0 ? parts[0].trim().toUpperCase() : "DOMAIN";
+                String value = parts.length > 1 ? parts[1].trim() : "";
+                String description = parts.length > 2 ? parts[2].trim() : "Bulk ingested Threat Intel IOC";
+                String source = parts.length > 3 ? parts[3].trim() : "Bulk File Ingestion";
+
+                if (StringUtils.hasText(value)) {
+                    if (!threatIntelRepository.existsByTypeAndValue(type, value)) {
+                        ThreatIntel ioc = ThreatIntel.builder()
+                                .type(type)
+                                .value(value)
+                                .description(description)
+                                .source(source)
+                                .createdAt(LocalDateTime.now())
+                                .updatedAt(LocalDateTime.now())
+                                .build();
+                        threatIntelRepository.save(ioc);
+                        count++;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            throw new BadRequestException("Failed to parse Threat Intel file: " + e.getMessage());
+        }
+
+        auditLogService.log(null, currentUserEmail, "THREAT_INTEL_BULK_UPLOAD", "THREAT_INTEL",
+                "Bulk ingested " + count + " IOC indicators into Threat Intel");
+        return count;
+    }
+
     public void deleteIoc(String id, String currentUserEmail) {
         ThreatIOC ioc = getIocById(id);
         threatIOCRepository.delete(ioc);

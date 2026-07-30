@@ -65,6 +65,14 @@ public class ThreatIntelController {
         return ResponseEntity.ok(threatIntelService.updateIoc(id, request, email));
     }
 
+    @PostMapping("/upload")
+    public ResponseEntity<?> uploadIocs(
+            @RequestParam("file") org.springframework.web.multipart.MultipartFile file,
+            @AuthenticationPrincipal UserPrincipal userPrincipal) {
+        int uploaded = threatIntelService.uploadIocs(file, userPrincipal != null ? userPrincipal.getUsername() : "system@sentinelcore.local");
+        return ResponseEntity.ok(java.util.Map.of("message", "Ingested " + uploaded + " Threat Intel indicators."));
+    }
+
     @DeleteMapping("/{id}")
     public ResponseEntity<?> deleteIoc(
             @PathVariable String id,

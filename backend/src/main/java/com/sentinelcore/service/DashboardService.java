@@ -3,6 +3,7 @@ package com.sentinelcore.service;
 import com.sentinelcore.dto.IncidentResponse;
 import com.sentinelcore.dto.UserResponse;
 import com.sentinelcore.model.AuditLog;
+import com.sentinelcore.model.Alert;
 import com.sentinelcore.model.Asset;
 import com.sentinelcore.model.Incident;
 import com.sentinelcore.model.SecurityLog;
@@ -21,6 +22,7 @@ import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.stereotype.Service;
+import com.sentinelcore.repository.VulnerabilityRepository;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -30,6 +32,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+
+import com.sentinelcore.repository.AlertRepository;
+import java.util.Comparator;
+import java.util.UUID;
 
 @Service
 public class DashboardService {
@@ -50,10 +56,19 @@ public class DashboardService {
     private SecurityLogRepository securityLogRepository;
 
     @Autowired
+    private AlertRepository alertRepository;
+
+    @Autowired
     private ThreatIntelRepository threatIntelRepository;
 
     @Autowired
     private MongoTemplate mongoTemplate;
+
+    @Autowired
+    private VulnerabilityRepository vulnerabilityRepository;
+
+    @Autowired
+    private RiskScoringService riskScoringService;
 
     public Map<String, Object> getDashboardStats(String currentUserId) {
         Map<String, Object> stats = new HashMap<>();
@@ -70,6 +85,11 @@ public class DashboardService {
         long totalLogs = securityLogRepository.count();
         long anomalyLogs = securityLogRepository.countByAnomaly(true);
         long totalThreatIntel = threatIntelRepository.count();
+        long totalVulnerabilities = vulnerabilityRepository.count();
+        long openVulnerabilities = vulnerabilityRepository.countByStatus("NEW")
+                + vulnerabilityRepository.countByStatus("ASSIGNED")
+                + vulnerabilityRepository.countByStatus("IN_PROGRESS")
+                + vulnerabilityRepository.countByStatus("UNDER_REVIEW");
         List<Map<String, Object>> alertStatusCounts = getAlertStatusCounts();
         List<Map<String, Object>> severityDistribution = getSeverityDistribution();
         List<Map<String, Object>> incidentTrend = getIncidentTrend();
@@ -123,6 +143,8 @@ public class DashboardService {
         stats.put("totalLogs", totalLogs);
         stats.put("anomalyLogs", anomalyLogs);
         stats.put("totalThreatIntel", totalThreatIntel);
+        stats.put("totalVulnerabilities", totalVulnerabilities);
+        stats.put("openVulnerabilities", openVulnerabilities);
         stats.put("alertStatusCounts", alertStatusCounts);
         stats.put("severityDistribution", severityDistribution);
         stats.put("incidentTrend", incidentTrend);
@@ -135,17 +157,59 @@ public class DashboardService {
         stats.put("recentLogins", recentLogins);
         stats.put("myAssignedIncidents", myAssignedIncidents);
         stats.put("myAssignedIncidentCount", myAssignedIncidentCount);
+        stats.put("liveEventsFeed", getRecentLiveEvents());
+        stats.putAll(riskScoringService.getRiskSummary());
 
         return stats;
     }
 
+    public List<Map<String, Object>> getRecentLiveEvents() {
+        List<Map<String, Object>> events = new ArrayList<>();
+
+        // 1. Security Logs (recent 15)
+        securityLogRepository.findAll(Sort.by(Sort.Direction.DESC, "timestamp")).stream()
+                .limit(15)
+                .forEach(log -> events.add(Map.of(
+                        "_id", "log:" + (log.getId() == null ? UUID.randomUUID().toString() : log.getId()),
+                        "message", log.getRawMessage() != null ? log.getRawMessage() : "Security Log Event from " + (log.getIpAddress() != null ? log.getIpAddress() : "network"),
+                        "severity", log.isAnomaly() ? "HIGH" : "INFO",
+                        "source", log.getSystemType() != null ? log.getSystemType() : "SYSTEM",
+                        "timestamp", log.getTimestamp() != null ? log.getTimestamp() : LocalDateTime.now()
+                )));
+
+        // 2. Alerts (recent 10)
+        alertRepository.findAll(Sort.by(Sort.Direction.DESC, "createdAt")).stream()
+                .limit(10)
+                .forEach(alert -> events.add(Map.of(
+                        "_id", "alert:" + (alert.getId() == null ? UUID.randomUUID().toString() : alert.getId()),
+                        "message", "Alert: " + (alert.getTitle() != null ? alert.getTitle() : alert.getDescription()),
+                        "severity", alert.getSeverity() != null ? alert.getSeverity() : "MEDIUM",
+                        "source", "ALERT",
+                        "timestamp", alert.getCreatedAt() != null ? alert.getCreatedAt() : LocalDateTime.now()
+                )));
+
+        // 3. Audit Logs (logins / user actions - recent 10)
+        Query auditQuery = new Query().with(Sort.by(Sort.Direction.DESC, "timestamp")).limit(10);
+        mongoTemplate.find(auditQuery, AuditLog.class).forEach(log -> events.add(Map.of(
+                "_id", "audit:" + (log.getId() == null ? UUID.randomUUID().toString() : log.getId()),
+                "message", "Audit: " + (log.getDescription() != null ? log.getDescription() : log.getAction()),
+                "severity", "LOGIN_FAILED".equals(log.getAction()) ? "HIGH" : "INFO",
+                "source", "AUTH",
+                "timestamp", log.getTimestamp() != null ? log.getTimestamp() : LocalDateTime.now()
+        )));
+
+        return events.stream()
+                .sorted(Comparator.comparing(e -> (LocalDateTime) e.get("timestamp"), Comparator.nullsLast(Comparator.reverseOrder())))
+                .limit(30)
+                .collect(Collectors.toList());
+    }
+
     private List<Map<String, Object>> getAlertStatusCounts() {
         return List.of(
-                Map.of("status", "Open", "count", incidentRepository.countByStatus("OPEN")),
-                Map.of("status", "Triaged", "count", incidentRepository.countByStatus("TRIAGED")),
-                Map.of("status", "In Progress", "count", incidentRepository.countByStatus("IN_PROGRESS")),
-                Map.of("status", "Resolved", "count",
-                        incidentRepository.countByStatus("RESOLVED") + incidentRepository.countByStatus("CLOSED"))
+                Map.of("status", "Open", "count", countAlertsByStatuses("OPEN", "NEW")),
+                Map.of("status", "Acknowledged", "count", countAlertsByStatuses("ACKNOWLEDGED", "INVESTIGATING")),
+                Map.of("status", "Dismissed", "count", countAlertsByStatuses("DISMISSED", "FALSE_POSITIVE")),
+                Map.of("status", "Resolved", "count", countAlertsByStatuses("RESOLVED"))
         );
     }
 
@@ -168,10 +232,10 @@ public class DashboardService {
             LocalDateTime end = day.plusDays(1).atStartOfDay();
 
             Criteria incidentCriteria = Criteria.where("createdAt").gte(start).lt(end);
-            Criteria alertCriteria = Criteria.where("timestamp").gte(start).lt(end).and("anomaly").is(true);
+            Criteria alertCriteria = Criteria.where("createdAt").gte(start).lt(end);
 
             long incidents = mongoTemplate.count(new Query(incidentCriteria), Incident.class);
-            long alerts = mongoTemplate.count(new Query(alertCriteria), SecurityLog.class);
+            long alerts = mongoTemplate.count(new Query(alertCriteria), Alert.class);
 
             trend.add(Map.of(
                     "day", day.getDayOfWeek().toString().substring(0, 3),
@@ -201,5 +265,9 @@ public class DashboardService {
 
     private long countIncidentsByPriority(String priority) {
         return mongoTemplate.count(new Query(Criteria.where("priority").is(priority)), Incident.class);
+    }
+
+    private long countAlertsByStatuses(String... statuses) {
+        return mongoTemplate.count(new Query(Criteria.where("status").in((Object[]) statuses)), Alert.class);
     }
 }

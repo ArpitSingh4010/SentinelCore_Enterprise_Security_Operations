@@ -8,6 +8,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../components/Toast';
 
+
 const COLUMNS = [
   { id: 'NEW', label: 'New', color: '#ef4444', glow: 'rgba(239,68,68,0.15)', borderColor: 'rgba(239,68,68,0.25)' },
   { id: 'ASSIGNED', label: 'Assigned', color: '#f59e0b', glow: 'rgba(245,158,11,0.15)', borderColor: 'rgba(245,158,11,0.25)' },
@@ -716,11 +717,11 @@ export default function Vulnerabilities() {
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-slate-400">Target Asset</label>
+                  <label className="text-slate-300">Target Asset</label>
                   <select
                     value={formData.assetId}
                     onChange={(e) => setFormData({ ...formData, assetId: e.target.value })}
-                    className="sc-select w-full"
+                    className="sc-select w-full bg-black"
                   >
                     <option value="">Select Asset...</option>
                     {assets.map(a => (
@@ -772,7 +773,7 @@ export default function Vulnerabilities() {
                   <select
                     value={formData.assignedToEmail}
                     onChange={(e) => setFormData({ ...formData, assignedToEmail: e.target.value })}
-                    className="sc-select w-full"
+                    className="sc-select w-full bg-black"
                   >
                     <option value="">Unassigned</option>
                     {usersList.map(usr => (
@@ -785,7 +786,7 @@ export default function Vulnerabilities() {
                   <select
                     value={formData.assignedTeamId}
                     onChange={(e) => setFormData({ ...formData, assignedTeamId: e.target.value })}
-                    className="sc-select w-full"
+                    className="sc-select w-full bg-black"
                   >
                     <option value="">Select Team...</option>
                     {teamsList.map(t => (
@@ -799,13 +800,13 @@ export default function Vulnerabilities() {
                 <button
                   type="button"
                   onClick={() => setShowAddModal(false)}
-                  className="sc-button-secondary py-2 px-4"
+                  className="cursor-pointer sc-button-secondary py-2 px-4"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="sc-button bg-primary text-black font-semibold py-2 px-4"
+                  className="cursor-pointer sc-button bg-primary text-black font-semibold py-2 px-4"
                 >
                   Create Ticket
                 </button>

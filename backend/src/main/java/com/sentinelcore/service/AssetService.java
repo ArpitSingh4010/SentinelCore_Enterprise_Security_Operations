@@ -16,6 +16,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 @Service
 public class AssetService {
@@ -29,8 +30,16 @@ public class AssetService {
     @Autowired
     private AuditLogService auditLogService;
 
+    @Autowired
+    private RiskScoringService riskScoringService;
+
     public List<Asset> getAssets() {
-        return assetRepository.findAll();
+        List<Asset> assets = assetRepository.findAll();
+        assets.forEach(asset -> {
+            asset.setCriticality(normalizeCriticality(asset.getCriticality()));
+            asset.setRiskScore(riskScoringService.getAssetRiskScore(asset));
+        });
+        return assets;
     }
 
     public Asset saveAsset(Asset request, String currentUserEmail) {
@@ -56,13 +65,15 @@ public class AssetService {
         asset.setIpAddress(request.getIpAddress());
         asset.setMacAddress(request.getMacAddress());
         asset.setOs(request.getOs());
-        asset.setCriticality(defaultValue(request.getCriticality(), "MEDIUM"));
-        asset.setStatus(defaultValue(request.getStatus(), "ONLINE"));
+        asset.setCriticality(normalizeCriticality(request.getCriticality()));
+        asset.setStatus(defaultValue(request.getStatus(), "ONLINE").trim().toUpperCase(Locale.ROOT));
         asset.setOwnerTeamId(request.getOwnerTeamId());
         asset.setLastSeen(request.getLastSeen() == null ? now : request.getLastSeen());
         asset.setUpdatedAt(now);
 
         Asset saved = assetRepository.save(asset);
+        saved.setRiskScore(riskScoringService.getAssetRiskScore(saved));
+        saved = assetRepository.save(saved);
         auditLogService.log(null, currentUserEmail, "ASSET_SAVED", "ASSET",
                 "Saved asset: " + saved.getName() + " (" + saved.getIpAddress() + ")");
         return saved;
@@ -133,6 +144,14 @@ public class AssetService {
         if (StringUtils.hasText(request.getOwnerTeamId()) && !teamRepository.existsById(request.getOwnerTeamId())) {
             throw new ResourceNotFoundException("Owner team not found.");
         }
+    }
+
+    private String normalizeCriticality(String criticality) {
+        String normalized = defaultValue(criticality, "MEDIUM").trim().toUpperCase(Locale.ROOT);
+        if (List.of("CRITICAL", "HIGH", "MEDIUM", "LOW").contains(normalized)) {
+            return normalized;
+        }
+        throw new BadRequestException("Asset criticality must be CRITICAL, HIGH, MEDIUM, or LOW.");
     }
 
     private String defaultValue(String value, String fallback) {
