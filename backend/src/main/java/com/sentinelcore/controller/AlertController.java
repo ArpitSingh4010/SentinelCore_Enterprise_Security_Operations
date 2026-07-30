@@ -33,7 +33,7 @@ public class AlertController {
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String severity,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "10") int size,
+            @RequestParam(defaultValue = "200") int size,
             @RequestParam(defaultValue = "updatedAt") String sortBy,
             @RequestParam(defaultValue = "desc") String direction) {
 
@@ -50,27 +50,33 @@ public class AlertController {
         return ResponseEntity.ok(AlertResponse.fromAlert(alertService.getAlertById(id)));
     }
 
-    @PutMapping("/{id}/status")
+    @RequestMapping(value = "/{id}/status", method = {RequestMethod.PUT, RequestMethod.POST})
     public ResponseEntity<AlertResponse> updateAlertStatus(
             @PathVariable String id,
-            @RequestBody Map<String, String> payload) {
+            @RequestBody(required = false) Map<String, String> payload,
+            @RequestParam(required = false) String status) {
         
-        String status = payload.get("status");
-        if (status == null || status.isEmpty()) {
+        String targetStatus = (payload != null && payload.get("status") != null) ? payload.get("status") : status;
+        if (targetStatus == null || targetStatus.isEmpty()) {
             return ResponseEntity.badRequest().build();
         }
         
-        return ResponseEntity.ok(AlertResponse.fromAlert(alertService.updateAlertStatus(id, status)));
+        return ResponseEntity.ok(AlertResponse.fromAlert(alertService.updateAlertStatus(id, targetStatus)));
     }
 
-    @PutMapping("/{id}/acknowledge")
+    @RequestMapping(value = "/{id}/acknowledge", method = {RequestMethod.PUT, RequestMethod.POST})
     public ResponseEntity<AlertResponse> acknowledgeAlert(@PathVariable String id) {
         return ResponseEntity.ok(AlertResponse.fromAlert(alertService.acknowledgeAlert(id)));
     }
 
-    @PutMapping("/{id}/dismiss")
+    @RequestMapping(value = "/{id}/dismiss", method = {RequestMethod.PUT, RequestMethod.POST})
     public ResponseEntity<AlertResponse> dismissAlert(@PathVariable String id) {
         return ResponseEntity.ok(AlertResponse.fromAlert(alertService.dismissAlert(id)));
+    }
+
+    @RequestMapping(value = "/{id}/resolve", method = {RequestMethod.PUT, RequestMethod.POST})
+    public ResponseEntity<AlertResponse> resolveAlert(@PathVariable String id) {
+        return ResponseEntity.ok(AlertResponse.fromAlert(alertService.resolveAlert(id)));
     }
 
     @PostMapping("/{id}/incident")

@@ -70,6 +70,85 @@ public class AlertService {
     @Autowired
     private AuditLogService auditLogService;
 
+    @Autowired(required = false)
+    private LiveEventService liveEventService;
+
+    @Autowired
+    private com.sentinelcore.repository.ThreatIntelRepository threatIntelRepository;
+
+    private static final Pattern URL_PATTERN = Pattern.compile("(?i)https?://[\\w\\.-]+(?:\\:[0-9]+)?(?:/[\\w\\.\\-%\\?=&]*)*");
+    private static final Pattern DOMAIN_PATTERN = Pattern.compile("(?i)\\b(?:[a-zA-Z0-9-]+\\.)+(?:com|org|net|xyz|ru|info|io|co|in|biz|gov|uk|cn)\\b");
+    private static final Pattern IP_PATTERN = Pattern.compile("\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b");
+
+    private void autoBlockIocsFromLogAndAlert(SecurityLog log, String sourceIp, String alertTitle, String alertDescription) {
+        if (threatIntelRepository == null) return;
+
+        String rawLog = log != null && log.getRawMessage() != null ? log.getRawMessage() : "";
+        String ipParam = StringUtils.hasText(sourceIp) ? sourceIp : "";
+        String title = alertTitle != null ? alertTitle : "";
+        String desc = alertDescription != null ? alertDescription : "";
+        String combinedText = (rawLog + " " + ipParam + " " + title + " " + desc).trim();
+
+        if (!StringUtils.hasText(combinedText)) return;
+
+        // Extract and auto-block URLs
+        java.util.regex.Matcher urlMatcher = URL_PATTERN.matcher(combinedText);
+        while (urlMatcher.find()) {
+            String url = urlMatcher.group().trim();
+            saveThreatIntelIoc("URL", url, "Auto-blocked URL from alert: " + (alertTitle != null ? alertTitle : "Security Event"));
+        }
+
+        // Extract and auto-block Domains
+        java.util.regex.Matcher domainMatcher = DOMAIN_PATTERN.matcher(combinedText);
+        while (domainMatcher.find()) {
+            String domain = domainMatcher.group().trim().toLowerCase();
+            if (!domain.endsWith(".java") && !domain.endsWith(".json") && !domain.endsWith(".csv") && !domain.endsWith(".png") && !domain.endsWith(".jpg")) {
+                saveThreatIntelIoc("DOMAIN", domain, "Auto-blocked Domain from alert: " + (alertTitle != null ? alertTitle : "Security Event"));
+            }
+        }
+
+        // Extract and auto-block IPs
+        if (log != null && StringUtils.hasText(log.getIpAddress())) {
+            String ip = log.getIpAddress().trim();
+            if (!"0.0.0.0".equals(ip) && !"127.0.0.1".equals(ip) && !"localhost".equalsIgnoreCase(ip)) {
+                saveThreatIntelIoc("IP", ip, "Auto-blocked IP from alert: " + (alertTitle != null ? alertTitle : "Security Event"));
+            }
+        }
+        if (StringUtils.hasText(sourceIp)) {
+            String ip = sourceIp.trim();
+            if (!"0.0.0.0".equals(ip) && !"127.0.0.1".equals(ip) && !"localhost".equalsIgnoreCase(ip)) {
+                saveThreatIntelIoc("IP", ip, "Auto-blocked IP from alert: " + (alertTitle != null ? alertTitle : "Security Event"));
+            }
+        }
+        java.util.regex.Matcher ipMatcher = IP_PATTERN.matcher(combinedText);
+        while (ipMatcher.find()) {
+            String ip = ipMatcher.group().trim();
+            if (!"0.0.0.0".equals(ip) && !"127.0.0.1".equals(ip) && !"localhost".equalsIgnoreCase(ip)) {
+                saveThreatIntelIoc("IP", ip, "Auto-blocked IP from alert: " + (alertTitle != null ? alertTitle : "Security Event"));
+            }
+        }
+    }
+
+    private void saveThreatIntelIoc(String type, String value, String description) {
+        if (!StringUtils.hasText(type) || !StringUtils.hasText(value)) return;
+        try {
+            if (!threatIntelRepository.existsByTypeAndValue(type, value)) {
+                com.sentinelcore.model.ThreatIntel intel = com.sentinelcore.model.ThreatIntel.builder()
+                        .type(type)
+                        .value(value)
+                        .description(description)
+                        .source("Automated Defense Engine")
+                        .createdAt(LocalDateTime.now())
+                        .updatedAt(LocalDateTime.now())
+                        .build();
+                threatIntelRepository.save(intel);
+                auditLogService.log("system", "system@sentinelcore.local", "THREAT_INTEL_AUTO_BLOCKED", "THREAT_INTEL",
+                        "Auto-blocked " + type + " [" + value + "] under Threat Intel");
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
     public void processLogs(List<SecurityLog> logs) {
         Set<String> specificallyAlertedLogIds = new HashSet<>();
 
@@ -346,7 +425,11 @@ public class AlertService {
                 .build();
 
         alertRepository.save(newAlert);
+        autoBlockIocsFromLogAndAlert(null, sourceIp, title, description);
         auditLogService.log("system", "system@sentinelcore.local", "ALERT_CREATED", "ALERT_MANAGEMENT", "Alert created: " + newAlert.getTitle());
+        if (liveEventService != null) {
+            liveEventService.broadcastEvent("Alert: " + newAlert.getTitle(), newAlert.getSeverity());
+        }
         return newAlert;
     }
 
@@ -415,6 +498,10 @@ public class AlertService {
 
     public Alert dismissAlert(String id) {
         return updateAlertStatus(id, "DISMISSED");
+    }
+
+    public Alert resolveAlert(String id) {
+        return updateAlertStatus(id, "RESOLVED");
     }
 
     public void processAuditAnomaly(String title, String description, String severity, String sourceIp) {

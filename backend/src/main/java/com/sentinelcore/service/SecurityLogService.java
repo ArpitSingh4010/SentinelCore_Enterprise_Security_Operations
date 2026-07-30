@@ -74,6 +74,9 @@ public class SecurityLogService {
     @Autowired
     private AuditLogService auditLogService;
 
+    @Autowired(required = false)
+    private LiveEventService liveEventService;
+
     @Autowired
     private AlertService alertService;
 
@@ -132,6 +135,16 @@ public class SecurityLogService {
         
         // Trigger Alert Engine
         alertService.processLogs(logs);
+        for (SecurityLog log : logs) {
+            if (log.isAnomaly()) {
+                alertService.processAuditAnomaly(
+                        "Anomalous Activity Detected: " + log.getSystemType(),
+                        "Detected threat in ingested log: " + log.getRawMessage(),
+                        log.getRiskScore() != null && log.getRiskScore() >= 0.90 ? "CRITICAL" : "HIGH",
+                        log.getIpAddress()
+                );
+            }
+        }
         
         auditLogService.log(null, currentUserEmail, "LOGS_UPLOADED", "LOG_MANAGEMENT",
                 "Uploaded " + logs.size() + " " + systemType + " log records");
@@ -152,6 +165,30 @@ public class SecurityLogService {
         Integer port = parseInteger(firstMatch(PORT_PATTERN, rawMessage, 1));
         Long bytes = parseLong(firstMatch(BYTES_PATTERN, rawMessage, 1));
 
+        boolean isExplicitIocFormat = rawMessage.startsWith("DOMAIN,") || rawMessage.startsWith("URL,") || rawMessage.startsWith("IP,") || rawMessage.startsWith("MALWARE_HASH,");
+        
+        if (isExplicitIocFormat) {
+            String[] parts = rawMessage.split(",");
+            String iocType = parts.length > 0 ? parts[0].trim().toUpperCase() : "DOMAIN";
+            String iocValue = parts.length > 1 ? parts[1].trim() : "";
+            String iocDesc = parts.length > 2 ? parts[2].trim() : "Malicious Indicator";
+            String iocSource = parts.length > 3 ? parts[3].trim() : "Log Ingestion Engine";
+
+            if (StringUtils.hasText(iocValue) && !threatIntelRepository.existsByTypeAndValue(iocType, iocValue)) {
+                ThreatIntel intel = ThreatIntel.builder()
+                        .type(iocType)
+                        .value(iocValue)
+                        .description(iocDesc)
+                        .source(iocSource)
+                        .createdAt(LocalDateTime.now())
+                        .updatedAt(LocalDateTime.now())
+                        .build();
+                threatIntelRepository.save(intel);
+                auditLogService.log("system", "system@sentinelcore.local", "THREAT_INTEL_AUTO_BLOCKED", "THREAT_INTEL",
+                        "Auto-blocked " + iocType + " [" + iocValue + "] under Threat Intel from log ingestion");
+            }
+        }
+
         Optional<Asset> asset = StringUtils.hasText(ipAddress)
                 ? assetRepository.findByIpAddress(ipAddress)
                 : Optional.empty();
@@ -169,19 +206,23 @@ public class SecurityLogService {
         
         boolean largeDataTransfer = bytes != null && bytes > 1_000_000_000L;
         
-        boolean keywordHit = containsAny(rawMessage.toLowerCase(), List.of("failed", "denied", "malware", "blocked", "exploit", "bruteforce", "brute force", "unauthorized"));
+        List<String> threatKeywords = List.of(
+                "phishing", "malicious", "ransomware", "stealer", "c2", "darkweb", "exfil",
+                "proxy", "dropper", "webshell", "backdoor", "beacon", "harvester", "attack",
+                "exploit", "trojan", "keylogger", "botnet", "failed", "denied", "blocked", "unauthorized"
+        );
+        boolean threatKeywordHit = containsAny(rawMessage.toLowerCase(), threatKeywords);
         
-        boolean anomaly = iocHit || keywordHit || sqlInjection || ransomware || bruteForceSignal || privEscalation || largeDataTransfer;
+        boolean anomaly = isExplicitIocFormat || threatKeywordHit || iocHit || sqlInjection || ransomware || bruteForceSignal || privEscalation || largeDataTransfer;
         
-        double riskScore = iocHit ? 0.95 : 
-                           ransomware ? 0.96 :
+        double riskScore = (isExplicitIocFormat || ransomware) ? 0.96 :
+                           (iocHit || threatKeywordHit) ? 0.95 :
                            sqlInjection ? 0.92 :
                            privEscalation ? 0.90 :
                            largeDataTransfer ? 0.85 :
-                           bruteForceSignal ? 0.78 :
-                           keywordHit ? 0.72 : asset.map(this::assetRiskScore).orElse(0.18);
+                           bruteForceSignal ? 0.78 : asset.map(this::assetRiskScore).orElse(0.18);
         
-        double confidenceScore = anomaly ? 0.88 : 0.61;
+        double confidenceScore = anomaly ? 0.95 : 0.61;
 
         return SecurityLog.builder()
                 .timestamp(extractTimestamp(rawMessage))

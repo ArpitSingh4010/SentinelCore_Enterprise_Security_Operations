@@ -101,7 +101,10 @@ public class SecurityConfig {
 
                 // Dashboard stats
                 .requestMatchers("/api/dashboard/**").hasAnyRole("ADMIN", "ANALYST", "VIEWER")
-                .requestMatchers(HttpMethod.GET, "/api/risk/**", "/api/notifications/**").hasAnyRole("ADMIN", "ANALYST", "VIEWER")
+                .requestMatchers("/api/notifications/**").hasAnyRole("ADMIN", "ANALYST", "VIEWER")
+                .requestMatchers("/api/compliance/**").hasAnyRole("ADMIN", "ANALYST", "VIEWER")
+                .requestMatchers("/api/playbooks/**").hasAnyRole("ADMIN", "ANALYST", "VIEWER")
+                .requestMatchers(HttpMethod.GET, "/api/risk/**").hasAnyRole("ADMIN", "ANALYST", "VIEWER")
                 
                 // Allow profile and logout
                 .requestMatchers("/api/auth/profile", "/api/auth/logout").authenticated()
