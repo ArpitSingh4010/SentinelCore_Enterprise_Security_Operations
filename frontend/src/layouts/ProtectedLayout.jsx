@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Navigate, Link, useLocation } from 'react-router-dom';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
+import { useWebSocket } from '../hooks/useWebSocket';
 import ChatBot from '../components/ChatBot';
 import {
   Shield,
@@ -31,6 +32,7 @@ import {
   ShieldCheck,
   BellDotIcon,
   BookOpen,
+  RefreshCw,
 } from 'lucide-react';
 
 export default function ProtectedLayout({ children }) {
@@ -45,6 +47,47 @@ export default function ProtectedLayout({ children }) {
   const [isScrolled, setIsScrolled] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Real-time WebSocket connection to /topic/notifications
+  const { events: wsEvents } = useWebSocket('http://localhost:8080/ws', '/topic/notifications');
+
+  const fetchNotifications = useCallback(async () => {
+    try {
+      setIsRefreshing(true);
+      const response = await axios.get('/api/notifications');
+      setNotifications(Array.isArray(response.data) ? response.data : []);
+    } catch (err) {
+      console.error('Failed to fetch notifications', err);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, []);
+
+  const handleMarkAsRead = async (id) => {
+    try {
+      await axios.post(`/api/notifications/read/${id}`);
+      setNotifications((prev) => prev.filter((item) => item.id !== id));
+    } catch (err) {
+      console.error('Failed to mark notification as read', err);
+    }
+  };
+
+  const handleMarkAllAsRead = async () => {
+    try {
+      await axios.post('/api/notifications/read-all');
+      setNotifications([]);
+    } catch (err) {
+      console.error('Failed to mark all notifications as read', err);
+    }
+  };
+
+  // Trigger notification refresh when WebSocket notification updates arrive
+  useEffect(() => {
+    if (user && wsEvents && wsEvents.length > 0) {
+      fetchNotifications();
+    }
+  }, [wsEvents, user, fetchNotifications]);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -72,19 +115,11 @@ export default function ProtectedLayout({ children }) {
   useEffect(() => {
     if (!user) return undefined;
 
-    const fetchNotifications = async () => {
-      try {
-        const response = await axios.get('/api/notifications');
-        setNotifications(Array.isArray(response.data) ? response.data : []);
-      } catch (err) {
-        console.error('Failed to fetch notifications', err);
-      }
-    };
-
     fetchNotifications();
-    const intervalId = window.setInterval(fetchNotifications, 30000);
+    // Fast polling every 3 seconds for immediate UI sync fallback
+    const intervalId = window.setInterval(fetchNotifications, 3000);
     return () => window.clearInterval(intervalId);
-  }, [user]);
+  }, [user, fetchNotifications]);
 
   if (loading) {
     return (
@@ -117,7 +152,7 @@ export default function ProtectedLayout({ children }) {
       : []),
 
     { name: 'Log Explorer', path: '/logs', icon: FileText },
-    { name: 'Alerts', path: '/alerts', icon: BellRing },
+    { name: 'Alerts Management', path: '/alerts', icon: BellRing },
     { name: 'Vulnerabilities', path: '/vulnerabilities', icon: Bug },
     { name: 'Compliance', path: '/compliance', icon: ShieldCheck },
     { name: 'Playbooks', path: '/playbooks', icon: BookOpen },
@@ -235,103 +270,140 @@ export default function ProtectedLayout({ children }) {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col gap-6 lg:ml-0">
-        <header className={`sc-topbar sticky top-0 z-20 transition-all duration-200 flex flex-col gap-4 px-4 py-4 sm:px-6 lg:px-6 ${isScrolled
+        <header className={`sc-topbar sticky top-0 z-20 transition-all duration-200 px-4 py-2.5 sm:px-5 lg:px-6 ${isScrolled
           ? 'mx-0 mt-0 rounded-none border-x-0 border-t-0 bg-[#080b14]/95 backdrop-blur-md shadow-lg shadow-black/30'
-          : 'mx-4 mt-4 rounded-2xl border lg:mx-0 lg:mt-4'
+          : 'mx-4 mt-3 rounded-2xl border lg:mx-0 lg:mt-3'
           }`}>
-          <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-            <div className="flex items-start gap-3">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3 min-w-0">
               <button
                 type="button"
                 onClick={() => setIsCollapsed((value) => !value)}
-                className="inline-flex rounded-xl border border-white/10 bg-white/5 p-2 text-slate-300 transition hover:border-sky-400/30 hover:text-white lg:hidden"
+                className="inline-flex rounded-xl border border-white/10 bg-white/5 p-1.5 text-slate-300 transition hover:border-sky-400/30 hover:text-white lg:hidden"
                 aria-label="Toggle navigation"
               >
                 <Menu className="h-4 w-4" />
               </button>
-              <div className="space-y-2">
-                <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.28em] text-slate-400">
-                  <span>Command center</span>
-                </div>
-                <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">{currentRoute.name}</h1>
-                <div className="flex flex-wrap items-center gap-2 text-sm text-slate-400">
-                  <span>Home</span>
-                  <ChevronRight className="h-3.5 w-3.5 text-slate-500" />
-                  <span>{currentRoute.name}</span>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 text-xs text-slate-400">
+                  <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-sky-400">Command Center</span>
+                  <ChevronRight className="h-3 w-3 text-slate-600" />
+                  <h1 className="text-base font-extrabold tracking-tight text-white truncate">{currentRoute.name}</h1>
                 </div>
               </div>
             </div>
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/8 pt-4 text-xs text-slate-400">
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => setShowNotifications((value) => !value)}
-                    className="relative rounded-xl border border-white/10 bg-white/5 p-2 text-slate-300 transition hover:border-red-400/30 hover:text-white"
-                    aria-label="Show notifications"
-                  >
-                    <BellDotIcon className="h-5 w-5 text-red-300" />
-                    {notifications.length > 0 && (
-                      <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-bold text-white">
-                        {notifications.length > 9 ? '9+' : notifications.length}
-                      </span>
-                    )}
-                  </button>
-                  {showNotifications && (
-                    <div className="absolute left-0 top-full z-40 mt-2 w-[min(92vw,24rem)] overflow-hidden rounded-2xl border border-white/10 bg-[#0b1220] shadow-2xl shadow-black/40 xl:left-auto xl:right-0">
-                      <div className="flex items-center justify-between border-b border-white/8 px-4 py-3">
-                        <div>
-                          <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">Notifications</p>
-                          <p className="mt-0.5 text-xs text-slate-300">{criticalNotificationCount} critical / {notifications.length} total</p>
-                        </div>
-                        <Bell className="h-4 w-4 text-sky-300" />
+
+            <div className="flex items-center gap-3 shrink-0">
+              {/* Notifications bell */}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowNotifications((val) => {
+                      const next = !val;
+                      if (next) fetchNotifications();
+                      return next;
+                    });
+                  }}
+                  className="relative rounded-xl border border-white/10 bg-white/5 p-2 text-slate-300 transition hover:border-red-400/30 hover:text-white"
+                  aria-label="Show notifications"
+                >
+                  <BellDotIcon className="h-4 w-4 text-red-300" />
+                  {notifications.length > 0 && (
+                    <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-bold text-white">
+                      {notifications.length > 9 ? '9+' : notifications.length}
+                    </span>
+                  )}
+                </button>
+                {showNotifications && (
+                  <div className="absolute right-0 top-full z-40 mt-2 w-[min(92vw,24rem)] overflow-hidden rounded-2xl border border-white/10 bg-[#0b1220] shadow-2xl shadow-black/40">
+                    <div className="flex items-center justify-between border-b border-white/8 px-4 py-3">
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">Notifications</p>
+                        <p className="mt-0.5 text-xs text-slate-300">{criticalNotificationCount} critical / {notifications.length} total</p>
                       </div>
-                      <div className="max-h-96 overflow-y-auto p-2">
-                        {notifications.length === 0 ? (
-                          <div className="px-4 py-8 text-center text-xs text-slate-500">No active high priority notifications.</div>
-                        ) : (
-                          notifications.map((item) => (
-                            <div key={item.id} className="rounded-xl border border-white/6 bg-white/3 p-3">
-                              <div className="flex items-start justify-between gap-3">
-                                <p className="text-sm font-semibold text-white">{item.title}</p>
-                                <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[9px] font-bold ${severityClasses[item.severity] ?? severityClasses.MEDIUM}`}>
-                                  {item.severity ?? 'MEDIUM'}
-                                </span>
-                              </div>
-                              <p className="mt-1 line-clamp-2 text-xs text-slate-400">{item.message}</p>
-                              <div className="mt-2 flex items-center justify-between gap-2 text-[10px] font-mono text-slate-600">
-                                <span>{item.source ?? 'SYSTEM'}</span>
-                                <span>{item.createdAt ? new Date(item.createdAt).toLocaleString() : ''}</span>
-                              </div>
-                            </div>
-                          ))
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={fetchNotifications}
+                          disabled={isRefreshing}
+                          className="rounded p-1 text-slate-400 hover:text-white transition"
+                          title="Refresh notifications"
+                        >
+                          <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin text-sky-400' : ''}`} />
+                        </button>
+                        {notifications.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={handleMarkAllAsRead}
+                            className="text-[10px] font-mono text-sky-400 hover:text-sky-300 hover:underline"
+                          >
+                            Mark all read
+                          </button>
                         )}
                       </div>
-                      <Link
-                        to="/notifications"
-                        onClick={() => setShowNotifications(false)}
-                        className="block border-t border-white/8 px-4 py-3 text-center text-xs font-semibold text-sky-300 transition hover:bg-white/5"
-                      >
-                        Configure notification rules
-                      </Link>
                     </div>
-                  )}
-                </div>
-                <span className="sc-badge border-white/10 bg-white/5 text-slate-300">Department: {user.department}</span>
+                    <div className="max-h-96 space-y-2 overflow-y-auto p-2">
+                      {notifications.length === 0 ? (
+                        <div className="px-4 py-8 text-center text-xs text-slate-500">No active notifications for your preferences.</div>
+                      ) : (
+                        notifications.map((item) => (
+                          <div key={item.id} className="group relative rounded-xl border border-white/6 bg-white/3 p-3 transition hover:border-white/12">
+                            <div className="flex items-start justify-between gap-3">
+                              <p className="pr-4 text-sm font-semibold text-white">{item.title}</p>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <span className={`rounded-full border px-2 py-0.5 text-[9px] font-bold ${severityClasses[item.severity] ?? severityClasses.MEDIUM}`}>
+                                  {item.severity ?? 'MEDIUM'}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleMarkAsRead(item.id)}
+                                  className="rounded p-1 text-slate-500 transition hover:bg-red-500/10 hover:text-red-400"
+                                  title="Dismiss notification"
+                                >
+                                  <X className="h-3 w-3" />
+                                </button>
+                              </div>
+                            </div>
+                            <p className="mt-1 line-clamp-2 text-xs text-slate-400">{item.message}</p>
+                            <div className="mt-2 flex items-center justify-between gap-2 text-[10px] font-mono text-slate-600">
+                              <span>{item.source ?? 'SYSTEM'}</span>
+                              <span>{item.createdAt ? new Date(item.createdAt).toLocaleString() : ''}</span>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                    <Link
+                      to="/notifications"
+                      onClick={() => setShowNotifications(false)}
+                      className="block border-t border-white/8 px-4 py-3 text-center text-xs font-semibold text-sky-300 transition hover:bg-white/5"
+                    >
+                      Configure notification rules
+                    </Link>
+                  </div>
+                )}
               </div>
+
+              {/* Department badge */}
+              {user.department && (
+                <span className="hidden sm:inline-flex sc-badge border-white/10 bg-white/5 text-slate-300 text-[10px]">
+                  {user.department}
+                </span>
+              )}
+
+              {/* User profile */}
               <div className="flex items-center gap-2">
-                <div className="flex items-center gap-2 rounded-full border border-white/8 bg-white/5 px-3 py-1.5">
-                  <Maximize2 className="h-3.5 w-3.5 text-sky-300" />
-                  <span>{user.email}</span>
+                <div className="hidden md:flex items-center gap-2 rounded-full border border-white/8 bg-white/5 px-3 py-1 text-xs text-slate-300">
+                  <Maximize2 className="h-3 w-3 text-sky-300" />
+                  <span className="max-w-[140px] truncate">{user.email}</span>
                 </div>
-                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-sky-400 text-sm font-semibold text-white ring-1 ring-white/10">
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-sky-400 text-xs font-bold text-white ring-1 ring-white/10">
                   {userInitial}
                 </div>
               </div>
             </div>
           </div>
-
-
         </header>
 
         <main className="mx-4 mb-4 flex-1 overflow-y-auto rounded-[1.75rem] border border-white/8 bg-[#0b1220]/45 p-4 sm:p-6 lg:mx-0 lg:p-8">

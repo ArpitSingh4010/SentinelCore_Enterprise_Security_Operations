@@ -53,39 +53,6 @@ const SEVERITY_COLORS = [
   CHART_COLORS.emerald,
 ];
 
-// ─── Fallback / mock data (shown when backend is offline) ────────────────────
-const MOCK_TREND = [
-  { day: 'Mon', incidents: 4, alerts: 9 },
-  { day: 'Tue', incidents: 7, alerts: 14 },
-  { day: 'Wed', incidents: 3, alerts: 6 },
-  { day: 'Thu', incidents: 9, alerts: 21 },
-  { day: 'Fri', incidents: 5, alerts: 11 },
-  { day: 'Sat', incidents: 2, alerts: 4 },
-  { day: 'Sun', incidents: 6, alerts: 13 },
-];
-
-const MOCK_SEVERITY = [
-  { name: 'P1 Critical', value: 3 },
-  { name: 'P2 High', value: 8 },
-  { name: 'P3 Medium', value: 14 },
-  { name: 'P4 Low', value: 21 },
-];
-
-const MOCK_ALERT_STATUS = [
-  { status: 'Open', count: 12 },
-  { status: 'Triaged', count: 7 },
-  { status: 'In Progress', count: 5 },
-  { status: 'Resolved', count: 31 },
-];
-
-// ─── Risk score mock data (Module 15) ─────────────────────────────────────────
-const MOCK_RISK = {
-  orgRiskScore:        62,   // 0–100 composite
-  criticalAssetsAtRisk: 3,   // CRITICAL criticality assets with risk ≥ 70
-  avgAssetRisk:        47,   // mean across all assets
-  riskTrend:           +8,   // delta vs last 7 days (positive = getting worse)
-};
-
 // ─── Risk Gauge (SVG radial arc) ────────────────────────────────────────────
 function RiskGauge({ score }) {
   const r = 34;
@@ -164,18 +131,25 @@ export default function Dashboard() {
   const [error, setError] = useState('');
   const canWorkIncidents = currentUser?.role === 'ADMIN' || currentUser?.role === 'ANALYST';
 
-  // Chart data — uses backend data when available, mock otherwise
-  const [trendData, setTrendData] = useState(MOCK_TREND);
-  const [severityData, setSeverityData] = useState(MOCK_SEVERITY);
-  const [alertStatusData, setAlertStatusData] = useState(MOCK_ALERT_STATUS);
-  // Risk data (Module 15)
-  const [riskData, setRiskData] = useState(MOCK_RISK);
+  // Chart data — initialized to empty arrays, populated strictly from backend
+  const [trendData, setTrendData] = useState([]);
+  const [severityData, setSeverityData] = useState([]);
+  const [alertStatusData, setAlertStatusData] = useState([]);
+  const [riskData, setRiskData] = useState({
+    orgRiskScore: 0,
+    criticalAssetsAtRisk: 0,
+    avgAssetRisk: 0,
+    riskTrend: 0,
+  });
 
-  // WebSocket live feed
+  // Real live event feed state
+  const [feedEvents, setFeedEvents] = useState([]);
+
+  // WebSocket real-time feed subscription to /topic/events
   const { events: liveEvents, connected: wsConnected } = useWebSocket(
     'http://localhost:8080/ws',
     '/topic/events',
-    30
+    50
   );
 
   useEffect(() => {
@@ -187,25 +161,37 @@ export default function Dashboard() {
         const data = response.data;
         setStats(data);
 
-        // Populate chart data from backend if fields exist
         if (data.incidentTrend?.length) setTrendData(data.incidentTrend);
         if (data.severityDistribution?.length) setSeverityData(data.severityDistribution);
         if (data.alertStatusCounts?.length) setAlertStatusData(data.alertStatusCounts);
-        // Wire risk data when backend returns it
+        if (data.liveEventsFeed?.length) setFeedEvents(data.liveEventsFeed);
+
         if (data.riskScore != null) setRiskData({
-          orgRiskScore:         data.riskScore,
-          criticalAssetsAtRisk: data.criticalAssetsAtRisk ?? MOCK_RISK.criticalAssetsAtRisk,
-          avgAssetRisk:         data.avgAssetRisk         ?? MOCK_RISK.avgAssetRisk,
-          riskTrend:            data.riskTrend            ?? MOCK_RISK.riskTrend,
+          orgRiskScore:         data.riskScore ?? 0,
+          criticalAssetsAtRisk: data.criticalAssetsAtRisk ?? 0,
+          avgAssetRisk:         data.avgAssetRisk         ?? 0,
+          riskTrend:            data.riskTrend            ?? 0,
         });
       } catch {
-        setError('Could not retrieve dashboard metrics.');
+        setError('Could not retrieve dashboard metrics from server.');
       } finally {
         setLoading(false);
       }
     };
     fetchStats();
   }, []);
+
+  // Merge incoming real-time STOMP events from WebSocket
+  useEffect(() => {
+    if (liveEvents && liveEvents.length > 0) {
+      setFeedEvents((prev) => {
+        const existingIds = new Set(prev.map((e) => e._id || e.id));
+        const newEvents = liveEvents.filter((e) => !existingIds.has(e._id || e.id));
+        if (newEvents.length === 0) return prev;
+        return [...newEvents, ...prev].slice(0, 50);
+      });
+    }
+  }, [liveEvents]);
 
   if (loading) {
     return (
@@ -225,7 +211,7 @@ export default function Dashboard() {
           <span className="sc-badge border-amber-500/20 bg-amber-500/10 text-amber-300">
             Live metrics
           </span>
-          {wsConnected ? (
+          {wsConnected || feedEvents.length > 0 ? (
             <span className="sc-badge border-emerald-500/20 bg-emerald-500/10 text-emerald-300">
               <Wifi className="h-2.5 w-2.5" /> WS Live
             </span>
@@ -246,7 +232,7 @@ export default function Dashboard() {
       {error && (
         <div className="sc-panel flex items-center gap-2 border border-red-500/25 bg-red-500/10 p-4 text-red-300">
           <AlertTriangle className="h-5 w-5 shrink-0" />
-          <span className="text-sm">{error} Charts are showing sample data.</span>
+          <span className="text-sm">{error}</span>
         </div>
       )}
 
@@ -300,7 +286,6 @@ export default function Dashboard() {
             <p className="mt-1 text-xs text-slate-500">mean time to resolve</p>
           </div>
           <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-3 text-amber-300">
-            <Siren className="h-6 w-6" />
             <Clock className="h-6 w-6" />
           </div>
         </div>
@@ -341,7 +326,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* ── Risk Score Section (Module 15) ───────────────────────────────── */}
+      {/* ── Risk Score Section ───────────────────────────────── */}
       <div className="sc-panel p-5">
         <div className="mb-4 flex items-center justify-between">
           <div>
@@ -427,47 +412,53 @@ export default function Dashboard() {
               <TrendingUp className="h-4 w-4" />
             </div>
           </div>
-          <ResponsiveContainer width="100%" height={220}>
-            <AreaChart data={trendData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-              <defs>
-                <linearGradient id="gradIncidents" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={CHART_COLORS.blue} stopOpacity={0.3} />
-                  <stop offset="95%" stopColor={CHART_COLORS.blue} stopOpacity={0} />
-                </linearGradient>
-                <linearGradient id="gradAlerts" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={CHART_COLORS.sky} stopOpacity={0.25} />
-                  <stop offset="95%" stopColor={CHART_COLORS.sky} stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-              <XAxis dataKey="day" tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false} />
-              <Tooltip content={<ChartTooltip />} />
-              <Legend
-                wrapperStyle={{ fontSize: '10px', color: '#94a3b8', paddingTop: '8px' }}
-                iconType="circle"
-                iconSize={8}
-              />
-              <Area
-                type="monotone"
-                dataKey="incidents"
-                name="Incidents"
-                stroke={CHART_COLORS.blue}
-                strokeWidth={2}
-                fill="url(#gradIncidents)"
-                dot={{ fill: CHART_COLORS.blue, r: 3, strokeWidth: 0 }}
-              />
-              <Area
-                type="monotone"
-                dataKey="alerts"
-                name="Alerts"
-                stroke={CHART_COLORS.sky}
-                strokeWidth={2}
-                fill="url(#gradAlerts)"
-                dot={{ fill: CHART_COLORS.sky, r: 3, strokeWidth: 0 }}
-              />
-            </AreaChart>
-          </ResponsiveContainer>
+          {trendData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={220}>
+              <AreaChart data={trendData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="gradIncidents" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={CHART_COLORS.blue} stopOpacity={0.3} />
+                    <stop offset="95%" stopColor={CHART_COLORS.blue} stopOpacity={0} />
+                  </linearGradient>
+                  <linearGradient id="gradAlerts" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={CHART_COLORS.sky} stopOpacity={0.25} />
+                    <stop offset="95%" stopColor={CHART_COLORS.sky} stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                <XAxis dataKey="day" tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false} />
+                <Tooltip content={<ChartTooltip />} />
+                <Legend
+                  wrapperStyle={{ fontSize: '10px', color: '#94a3b8', paddingTop: '8px' }}
+                  iconType="circle"
+                  iconSize={8}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="incidents"
+                  name="Incidents"
+                  stroke={CHART_COLORS.blue}
+                  strokeWidth={2}
+                  fill="url(#gradIncidents)"
+                  dot={{ fill: CHART_COLORS.blue, r: 3, strokeWidth: 0 }}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="alerts"
+                  name="Alerts"
+                  stroke={CHART_COLORS.sky}
+                  strokeWidth={2}
+                  fill="url(#gradAlerts)"
+                  dot={{ fill: CHART_COLORS.sky, r: 3, strokeWidth: 0 }}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="flex h-52 items-center justify-center text-xs font-mono text-slate-500">
+              No trend telemetry recorded.
+            </div>
+          )}
         </div>
 
         {/* Severity Distribution — Pie chart */}
@@ -481,46 +472,54 @@ export default function Dashboard() {
               <ShieldAlert className="h-4 w-4" />
             </div>
           </div>
-          <ResponsiveContainer width="100%" height={160}>
-            <PieChart>
-              <Pie
-                data={severityData}
-                cx="50%"
-                cy="50%"
-                innerRadius={45}
-                outerRadius={70}
-                paddingAngle={3}
-                dataKey="value"
-              >
-                {severityData.map((_, index) => (
-                  <Cell
-                    key={`cell-${index}`}
-                    fill={SEVERITY_COLORS[index % SEVERITY_COLORS.length]}
-                    stroke="rgba(0,0,0,0.3)"
-                  />
+          {severityData.length > 0 ? (
+            <>
+              <ResponsiveContainer width="100%" height={160}>
+                <PieChart>
+                  <Pie
+                    data={severityData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={45}
+                    outerRadius={70}
+                    paddingAngle={3}
+                    dataKey="value"
+                  >
+                    {severityData.map((_, index) => (
+                      <Cell
+                        key={`cell-${index}`}
+                        fill={SEVERITY_COLORS[index % SEVERITY_COLORS.length]}
+                        stroke="rgba(0,0,0,0.3)"
+                      />
+                    ))}
+                  </Pie>
+                  <Tooltip content={<ChartTooltip />} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="mt-2 space-y-1">
+                {severityData.map((entry, i) => (
+                  <div key={i} className="flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="h-2 w-2 rounded-full"
+                        style={{ background: SEVERITY_COLORS[i % SEVERITY_COLORS.length] }}
+                      />
+                      <span className="text-slate-400">{entry.name}</span>
+                    </div>
+                    <span className="font-mono font-semibold text-white">{entry.value}</span>
+                  </div>
                 ))}
-              </Pie>
-              <Tooltip content={<ChartTooltip />} />
-            </PieChart>
-          </ResponsiveContainer>
-          <div className="mt-2 space-y-1">
-            {severityData.map((entry, i) => (
-              <div key={i} className="flex items-center justify-between text-xs">
-                <div className="flex items-center gap-2">
-                  <span
-                    className="h-2 w-2 rounded-full"
-                    style={{ background: SEVERITY_COLORS[i % SEVERITY_COLORS.length] }}
-                  />
-                  <span className="text-slate-400">{entry.name}</span>
-                </div>
-                <span className="font-mono font-semibold text-white">{entry.value}</span>
               </div>
-            ))}
-          </div>
+            </>
+          ) : (
+            <div className="flex h-52 items-center justify-center text-xs font-mono text-slate-500">
+              No incidents categorized.
+            </div>
+          )}
         </div>
       </div>
 
-      {/* ── Alert Status Bar + Live Feed ────────────────────────────────── */}
+      {/* ── Alert Status Bar + Live Event Feed ────────────────────────────────── */}
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
         {/* Alert Status Bar chart */}
         <div className="sc-card p-6">
@@ -533,28 +532,34 @@ export default function Dashboard() {
               <Activity className="h-4 w-4" />
             </div>
           </div>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={alertStatusData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
-              <XAxis dataKey="status" tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false} />
-              <Tooltip content={<ChartTooltip />} />
-              <Bar dataKey="count" name="Count" radius={[6, 6, 0, 0]}>
-                {alertStatusData.map((entry, index) => {
-                  const colors = [
-                    CHART_COLORS.red,
-                    CHART_COLORS.amber,
-                    CHART_COLORS.blue,
-                    CHART_COLORS.emerald,
-                  ];
-                  return <Cell key={index} fill={colors[index % colors.length]} />;
-                })}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+          {alertStatusData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={alertStatusData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                <XAxis dataKey="status" tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false} />
+                <Tooltip content={<ChartTooltip />} />
+                <Bar dataKey="count" name="Count" radius={[6, 6, 0, 0]}>
+                  {alertStatusData.map((entry, index) => {
+                    const colors = [
+                      CHART_COLORS.red,
+                      CHART_COLORS.amber,
+                      CHART_COLORS.blue,
+                      CHART_COLORS.emerald,
+                    ];
+                    return <Cell key={index} fill={colors[index % colors.length]} />;
+                  })}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="flex h-48 items-center justify-center text-xs font-mono text-slate-500">
+              No alert metrics recorded.
+            </div>
+          )}
         </div>
 
-        {/* WebSocket Live Event Feed */}
+        {/* WebSocket Real-Time Security Feed */}
         <div className="sc-card flex flex-col p-6">
           <div className="mb-4 flex items-center justify-between">
             <div>
@@ -562,41 +567,45 @@ export default function Dashboard() {
               <h2 className="mt-1 text-base font-bold text-white">Live Security Events</h2>
             </div>
             <div
-              className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-[10px] font-bold uppercase tracking-widest ${wsConnected
+              className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-[10px] font-bold uppercase tracking-widest ${
+                wsConnected || feedEvents.length > 0
                   ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
                   : 'border-white/10 bg-white/5 text-slate-500'
-                }`}
+              }`}
             >
               <span
-                className={`h-1.5 w-1.5 rounded-full ${wsConnected ? 'animate-pulse bg-emerald-400' : 'bg-slate-600'}`}
+                className={`h-1.5 w-1.5 rounded-full ${
+                  wsConnected || feedEvents.length > 0 ? 'animate-pulse bg-emerald-400' : 'bg-slate-600'
+                }`}
               />
-              {wsConnected ? 'Live' : 'Offline'}
+              {wsConnected || feedEvents.length > 0 ? 'Live' : 'Offline'}
             </div>
           </div>
 
           {/* Feed body */}
-          <div className="flex-1 overflow-y-auto space-y-2 max-h-[200px] pr-1">
-            {liveEvents.length === 0 ? (
+          <div className="flex-1 overflow-y-auto space-y-2 max-h-[220px] pr-1">
+            {feedEvents.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-10 text-center">
                 <Zap className="mb-2 h-8 w-8 text-slate-700" />
                 <p className="text-xs font-mono text-slate-500">
                   {wsConnected
-                    ? 'Waiting for events...'
-                    : 'WebSocket server not reachable. Events will appear here when connected.'}
+                    ? 'Connected — Waiting for new live security events...'
+                    : 'No security events recorded in system history.'}
                 </p>
               </div>
             ) : (
-              liveEvents.map((ev) => (
+              feedEvents.map((ev) => (
                 <div
-                  key={ev._id}
-                  className="flex items-start gap-3 rounded-xl border border-white/6 bg-white/3 px-3 py-2 text-xs font-mono"
+                  key={ev._id || ev.id}
+                  className="flex items-start gap-3 rounded-xl border border-white/6 bg-white/3 px-3 py-2 text-xs font-mono transition hover:border-white/12"
                 >
                   <SeverityBadge severity={ev.severity} />
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-slate-200">{ev.message || ev.description || 'Event received'}</p>
-                    <p className="mt-0.5 text-[10px] text-slate-600">
-                      {ev.timestamp ? new Date(ev.timestamp).toLocaleTimeString() : ''}
-                    </p>
+                    <p className="truncate text-slate-200">{ev.message || ev.description || 'Security Event'}</p>
+                    <div className="mt-0.5 flex items-center justify-between text-[10px] text-slate-500">
+                      <span>Source: <span className="text-sky-400">{ev.source || 'SYSTEM'}</span></span>
+                      <span>{ev.timestamp ? new Date(ev.timestamp).toLocaleTimeString() : ''}</span>
+                    </div>
                   </div>
                 </div>
               ))
@@ -606,8 +615,8 @@ export default function Dashboard() {
           {/* Feed footer */}
           <div className="mt-3 border-t border-white/8 pt-3 text-[10px] font-mono text-slate-600">
             {wsConnected
-              ? `Connected · ${liveEvents.length} events received`
-              : 'Connects to /ws · topic /topic/events'}
+              ? `STOMP Connected · ${feedEvents.length} events loaded`
+              : 'Connects to STOMP /ws · /topic/events'}
           </div>
         </div>
       </div>

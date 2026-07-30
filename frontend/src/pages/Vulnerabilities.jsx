@@ -721,7 +721,7 @@ export default function Vulnerabilities() {
                   <select
                     value={formData.assetId}
                     onChange={(e) => setFormData({ ...formData, assetId: e.target.value })}
-                    className="sc-select w-full"
+                    className="sc-select w-full bg-black"
                   >
                     <option value="">Select Asset...</option>
                     {assets.map(a => (
@@ -773,7 +773,7 @@ export default function Vulnerabilities() {
                   <select
                     value={formData.assignedToEmail}
                     onChange={(e) => setFormData({ ...formData, assignedToEmail: e.target.value })}
-                    className="sc-select w-full"
+                    className="sc-select w-full bg-black"
                   >
                     <option value="">Unassigned</option>
                     {usersList.map(usr => (
@@ -786,7 +786,7 @@ export default function Vulnerabilities() {
                   <select
                     value={formData.assignedTeamId}
                     onChange={(e) => setFormData({ ...formData, assignedTeamId: e.target.value })}
-                    className="sc-select w-full"
+                    className="sc-select w-full bg-black"
                   >
                     <option value="">Select Team...</option>
                     {teamsList.map(t => (

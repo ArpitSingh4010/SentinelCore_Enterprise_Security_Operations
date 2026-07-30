@@ -1,10 +1,11 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import {
   ShieldCheck, ShieldAlert, Upload, ChevronDown, ChevronUp, CheckCircle2,
   XCircle, FileText, AlertTriangle, BarChart2, Layers, Lock,
-  Server, Globe, Users, RefreshCw,
+  Server, Globe, Users, RefreshCw, Edit3, Save, Download, X
 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 import { useToast } from '../components/Toast';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -28,7 +29,7 @@ function ProgressBar({ pct, thin = false }) {
     <div className={`w-full rounded-full bg-white/6 ${thin ? 'h-1.5' : 'h-2.5'}`}>
       <div
         className="rounded-full transition-all duration-700"
-        style={{ width: `${Math.min(100, pct)}%`, height: '100%', background: color, boxShadow: `0 0 8px ${color}50` }}
+        style={{ width: `${Math.min(100, Math.max(0, pct))}%`, height: '100%', background: color, boxShadow: `0 0 8px ${color}50` }}
       />
     </div>
   );
@@ -107,49 +108,161 @@ function EvidenceUpload({ frameworkId, domainId, onUploadSuccess }) {
 }
 
 // ─── Domain Row ───────────────────────────────────────────────────────────────
-function DomainRow({ frameworkId, domain, onUploadSuccess }) {
+function DomainRow({ frameworkId, domain, canEdit, onDomainUpdate, onUploadSuccess }) {
+  const { showToast } = useToast();
   const [open, setOpen] = useState(false);
-  const pct     = domain.controls > 0 ? Math.round((domain.compliant / domain.controls) * 100) : 100;
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  // Edit form state
+  const [controls, setControls]   = useState(domain.controls);
+  const [compliant, setCompliant] = useState(domain.compliant);
+  const [inReview, setInReview]   = useState(domain.inReview);
+  const [openGaps, setOpenGaps]   = useState(domain.open);
+
+  const pct = domain.controls > 0 ? Math.round((domain.compliant / domain.controls) * 100) : 100;
   const uploads = domain.evidence || [];
+
+  const handleSaveDomain = async (e) => {
+    e.preventDefault();
+    if (compliant + inReview + openGaps > controls) {
+      showToast({ type: 'error', message: 'Compliant + In Review + Open Gaps cannot exceed Total Controls' });
+      return;
+    }
+    setSaving(true);
+    try {
+      const payload = { controls, compliant, inReview, open: openGaps };
+      await axios.put(`/api/compliance/${frameworkId}/domains/${domain.id}`, payload);
+      onDomainUpdate(frameworkId, domain.id, payload);
+      setEditing(false);
+      showToast({ type: 'success', message: `Domain "${domain.name}" controls updated` });
+    } catch (err) {
+      showToast({ type: 'error', message: err.response?.data?.message || 'Failed to update domain controls' });
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div className="rounded-2xl border border-white/8 bg-[#0b1220]/60 transition hover:border-white/12">
-      <button type="button" onClick={() => setOpen((v) => !v)} className="flex w-full items-center gap-4 p-4 text-left">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/8 bg-white/5 text-slate-400">
-          {getIcon(domain.icon)}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-sm font-semibold text-white">{domain.name}</span>
-            <div className="flex shrink-0 items-center gap-2">
-              <span className="font-mono text-xs text-slate-400">{domain.compliant}/{domain.controls}</span>
-              <StatusBadge pct={pct} />
-            </div>
+      <div className="flex w-full items-center gap-4 p-4">
+        <button type="button" onClick={() => setOpen((v) => !v)} className="flex flex-1 items-center gap-4 text-left">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/8 bg-white/5 text-slate-400">
+            {getIcon(domain.icon)}
           </div>
-          <div className="mt-2"><ProgressBar pct={pct} /></div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm font-semibold text-white">{domain.name}</span>
+              <div className="flex shrink-0 items-center gap-2">
+                <span className="font-mono text-xs text-slate-400">{domain.compliant}/{domain.controls}</span>
+                <StatusBadge pct={pct} />
+              </div>
+            </div>
+            <div className="mt-2"><ProgressBar pct={pct} /></div>
+          </div>
+        </button>
+
+        <div className="flex items-center gap-2">
+          {canEdit && (
+            <button
+              type="button"
+              onClick={() => { setEditing((v) => !v); setOpen(true); }}
+              className="rounded-lg border border-white/10 bg-white/5 p-1.5 text-slate-400 hover:text-white transition"
+              title="Edit domain controls"
+            >
+              <Edit3 className="h-3.5 w-3.5" />
+            </button>
+          )}
+          <button type="button" onClick={() => setOpen((v) => !v)} className="p-1 text-slate-500">
+            {open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          </button>
         </div>
-        <div className="ml-2 shrink-0 text-slate-500">
-          {open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-        </div>
-      </button>
+      </div>
 
       {open && (
         <div className="border-t border-white/8 px-4 pb-4 pt-4">
-          {/* Control breakdown */}
-          <div className="grid grid-cols-3 gap-3">
-            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/8 p-3 text-center">
-              <p className="text-xl font-bold text-emerald-400">{domain.compliant}</p>
-              <p className="mt-0.5 text-[10px] font-mono text-emerald-600">Compliant</p>
+          {/* Edit form */}
+          {editing ? (
+            <form onSubmit={handleSaveDomain} className="mb-4 rounded-xl border border-sky-500/30 bg-sky-500/5 p-3.5 space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-bold text-sky-300">Edit Domain Controls — {domain.name}</p>
+                <button type="button" onClick={() => setEditing(false)} className="text-slate-500 hover:text-white">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div>
+                  <label className="mb-1 block text-[10px] font-mono text-slate-400">Total Controls</label>
+                  <input
+                    type="number" min="0"
+                    value={controls}
+                    onChange={(e) => setControls(parseInt(e.target.value, 10) || 0)}
+                    className="w-full rounded-lg border border-white/10 bg-[#0b1220] px-2.5 py-1.5 text-xs text-white focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[10px] font-mono text-emerald-400">Compliant</label>
+                  <input
+                    type="number" min="0"
+                    value={compliant}
+                    onChange={(e) => setCompliant(parseInt(e.target.value, 10) || 0)}
+                    className="w-full rounded-lg border border-white/10 bg-[#0b1220] px-2.5 py-1.5 text-xs text-white focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[10px] font-mono text-amber-400">In Review</label>
+                  <input
+                    type="number" min="0"
+                    value={inReview}
+                    onChange={(e) => setInReview(parseInt(e.target.value, 10) || 0)}
+                    className="w-full rounded-lg border border-white/10 bg-[#0b1220] px-2.5 py-1.5 text-xs text-white focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[10px] font-mono text-red-400">Open Gaps</label>
+                  <input
+                    type="number" min="0"
+                    value={openGaps}
+                    onChange={(e) => setOpenGaps(parseInt(e.target.value, 10) || 0)}
+                    className="w-full rounded-lg border border-white/10 bg-[#0b1220] px-2.5 py-1.5 text-xs text-white focus:outline-none"
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setEditing(false)}
+                  className="rounded-lg border border-white/10 px-3 py-1 text-xs text-slate-400 hover:text-white"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="flex items-center gap-1.5 rounded-lg border border-sky-500/40 bg-sky-500/20 px-3 py-1 text-xs font-semibold text-sky-300 hover:bg-sky-500/30 disabled:opacity-40"
+                >
+                  {saving ? <div className="h-3 w-3 animate-spin rounded-full border-2 border-sky-300/30 border-t-sky-300" /> : <Save className="h-3 w-3" />}
+                  Save Controls
+                </button>
+              </div>
+            </form>
+          ) : (
+            /* Control breakdown */
+            <div className="grid grid-cols-3 gap-3">
+              <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/8 p-3 text-center">
+                <p className="text-xl font-bold text-emerald-400">{domain.compliant}</p>
+                <p className="mt-0.5 text-[10px] font-mono text-emerald-600">Compliant</p>
+              </div>
+              <div className="rounded-xl border border-amber-500/20 bg-amber-500/8 p-3 text-center">
+                <p className="text-xl font-bold text-amber-400">{domain.inReview}</p>
+                <p className="mt-0.5 text-[10px] font-mono text-amber-600">In Review</p>
+              </div>
+              <div className="rounded-xl border border-red-500/20 bg-red-500/8 p-3 text-center">
+                <p className="text-xl font-bold text-red-400">{domain.open}</p>
+                <p className="mt-0.5 text-[10px] font-mono text-red-600">Open Gaps</p>
+              </div>
             </div>
-            <div className="rounded-xl border border-amber-500/20 bg-amber-500/8 p-3 text-center">
-              <p className="text-xl font-bold text-amber-400">{domain.inReview}</p>
-              <p className="mt-0.5 text-[10px] font-mono text-amber-600">In Review</p>
-            </div>
-            <div className="rounded-xl border border-red-500/20 bg-red-500/8 p-3 text-center">
-              <p className="text-xl font-bold text-red-400">{domain.open}</p>
-              <p className="mt-0.5 text-[10px] font-mono text-red-600">Open Gaps</p>
-            </div>
-          </div>
+          )}
 
           {/* Uploaded evidence list */}
           {uploads.length > 0 && (
@@ -204,28 +317,35 @@ function ComplianceGauge({ pct }) {
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function Compliance() {
+  const { user: currentUser } = useAuth();
   const { showToast } = useToast();
   const [frameworks, setFrameworks] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [frameworkId, setFid] = useState('');
   const [domainFilter, setDomainFilter] = useState('ALL');
 
-  useEffect(() => {
-    const loadData = async () => {
-      try {
-        const res = await axios.get('/api/compliance');
-        setFrameworks(res.data);
-        if (res.data.length > 0) {
-          setFid(res.data[0].frameworkId);
-        }
-      } catch (err) {
-        showToast({ type: 'error', message: 'Failed to fetch compliance frameworks' });
-      } finally {
-        setLoading(false);
+  const canEdit = currentUser?.role === 'ADMIN' || currentUser?.role === 'ANALYST';
+
+  const loadData = useCallback(async () => {
+    try {
+      setRefreshing(true);
+      const res = await axios.get('/api/compliance');
+      setFrameworks(res.data);
+      if (res.data.length > 0 && !frameworkId) {
+        setFid(res.data[0].frameworkId);
       }
-    };
+    } catch (err) {
+      showToast({ type: 'error', message: 'Failed to fetch compliance frameworks' });
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [frameworkId, showToast]);
+
+  useEffect(() => {
     loadData();
-  }, [showToast]);
+  }, [loadData]);
 
   const framework = frameworks.find((f) => f.frameworkId === frameworkId);
 
@@ -249,19 +369,64 @@ export default function Compliance() {
   }, [framework, domainFilter]);
 
   const handleUploadSuccess = (domainId, evidence) => {
-    setFrameworks(prev => prev.map(fw => {
-      if (fw.frameworkId !== frameworkId) return fw;
-      return {
-        ...fw,
-        domains: fw.domains.map(d => {
-          if (d.id !== domainId) return d;
-          return {
-            ...d,
-            evidence: [...(d.evidence || []), evidence]
-          };
-        })
-      };
-    }));
+    setFrameworks((prev) =>
+      prev.map((fw) => {
+        if (fw.frameworkId !== frameworkId) return fw;
+        return {
+          ...fw,
+          domains: fw.domains.map((d) => {
+            if (d.id !== domainId) return d;
+            return {
+              ...d,
+              evidence: [...(d.evidence || []), evidence],
+            };
+          }),
+        };
+      })
+    );
+  };
+
+  const handleDomainUpdate = (fwId, domainId, payload) => {
+    setFrameworks((prev) =>
+      prev.map((fw) => {
+        if (fw.frameworkId !== fwId) return fw;
+        return {
+          ...fw,
+          domains: fw.domains.map((d) => {
+            if (d.id !== domainId) return d;
+            return {
+              ...d,
+              controls: payload.controls,
+              compliant: payload.compliant,
+              inReview: payload.inReview,
+              open: payload.open,
+            };
+          }),
+        };
+      })
+    );
+  };
+
+  const handleExportReport = () => {
+    if (!framework) return;
+    const reportData = {
+      framework: framework.label,
+      description: framework.description,
+      generatedAt: new Date().toISOString(),
+      overallScorePercent: overallPct,
+      totalControls: framework.domains.reduce((s, d) => s + d.controls, 0),
+      compliantControls: framework.domains.reduce((s, d) => s + d.compliant, 0),
+      openGaps: totalGaps,
+      domains: framework.domains,
+    };
+    const blob = new Blob([JSON.stringify(reportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Compliance_Attestation_${framework.frameworkId}_${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast({ type: 'success', message: 'Attestation report downloaded' });
   };
 
   if (loading) {
@@ -277,15 +442,36 @@ export default function Compliance() {
   return (
     <div className="space-y-6 sc-fade-in">
       {/* Page header */}
-      <div className="sc-panel p-6">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="sc-badge border-sky-500/20 bg-sky-500/10 text-sky-300">Compliance</span>
-          <span className="sc-badge border-white/10 bg-white/5 text-slate-400">Module 11</span>
+      <div className="sc-panel p-6 flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="sc-badge border-sky-500/20 bg-sky-500/10 text-sky-300">Compliance</span>
+            <span className="sc-badge border-white/10 bg-white/5 text-slate-400">Module 11</span>
+          </div>
+          <h1 className="mt-3 text-2xl font-extrabold tracking-tight text-white">Compliance Manager</h1>
+          <p className="mt-2 max-w-3xl text-sm text-slate-400">
+            Track regulatory framework adherence, manage control domains, and attach supporting evidence for audit readiness.
+          </p>
         </div>
-        <h1 className="mt-3 text-2xl font-extrabold tracking-tight text-white">Compliance Manager</h1>
-        <p className="mt-2 max-w-3xl text-sm text-slate-400">
-          Track regulatory framework adherence, manage control domains, and attach supporting evidence for audit readiness.
-        </p>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={loadData}
+            disabled={refreshing}
+            className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-slate-300 hover:border-white/20 hover:text-white transition disabled:opacity-40"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin text-sky-400' : ''}`} />
+            Refresh
+          </button>
+          <button
+            type="button"
+            onClick={handleExportReport}
+            className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/20 transition"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Export Attestation
+          </button>
+        </div>
       </div>
 
       {/* Framework selector */}
@@ -387,7 +573,14 @@ export default function Compliance() {
             </div>
           ) : (
             filteredDomains.map((domain) => (
-              <DomainRow key={domain.id} frameworkId={framework.frameworkId} domain={domain} onUploadSuccess={handleUploadSuccess} />
+              <DomainRow
+                key={domain.id}
+                frameworkId={framework.frameworkId}
+                domain={domain}
+                canEdit={canEdit}
+                onDomainUpdate={handleDomainUpdate}
+                onUploadSuccess={handleUploadSuccess}
+              />
             ))
           )}
         </div>

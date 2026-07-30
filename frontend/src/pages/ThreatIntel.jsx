@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import {
   AlertCircle,
@@ -11,6 +11,7 @@ import {
   Server,
   ShieldCheck,
   Trash2,
+  Upload,
   X,
 } from 'lucide-react';
 import { useToast } from '../components/Toast';
@@ -84,6 +85,10 @@ export default function ThreatIntel() {
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState('');
 
+  // Bulk Upload state
+  const fileInputRef = useRef(null);
+  const [uploading, setUploading] = useState(false);
+
   // Filters
   const [search, setSearch]         = useState('');
   const [typeFilter, setTypeFilter] = useState('ALL');
@@ -96,6 +101,26 @@ export default function ThreatIntel() {
 
   // Delete confirm
   const [deleteTarget, setDeleteTarget] = useState(null);
+
+  const handleFileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    const data = new FormData();
+    data.append('file', file);
+    try {
+      const res = await axios.post('/api/threat-intel/upload', data, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      showToast({ type: 'success', message: res.data?.message || 'Bulk IOC ingestion completed.' });
+      fetchIocs();
+    } catch (err) {
+      showToast({ type: 'error', message: err.response?.data?.message || 'Failed to ingest IOC file.' });
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
 
   // ── Data fetching ───────────────────────────────────────────────────────────
   const fetchIocs = async () => {
@@ -200,13 +225,30 @@ export default function ThreatIntel() {
             Manage blocklists and Indicators of Compromise (IOC) to filter malicious sources.
           </p>
         </div>
-        <button
-          onClick={() => { setFormData(emptyForm); setFormError(''); setShowAddForm(true); }}
-          className="c-p sc-button-primary px-4 py-3 text-sm font-semibold"
-        >
-          <Plus className="h-4 w-4" />
-          <span>Add IOC</span>
-        </button>
+        <div className="flex items-center gap-3">
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileUpload}
+            accept=".csv,.txt,.json"
+            className="hidden"
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            className="c-p sc-button-secondary px-4 py-3 text-sm font-semibold"
+          >
+            <Upload className={`h-4 w-4 ${uploading ? 'animate-spin' : ''}`} />
+            <span>{uploading ? 'Ingesting...' : 'Bulk Ingest IOCs'}</span>
+          </button>
+          <button
+            onClick={() => { setFormData(emptyForm); setFormError(''); setShowAddForm(true); }}
+            className="c-p sc-button-primary px-4 py-3 text-sm font-semibold"
+          >
+            <Plus className="h-4 w-4" />
+            <span>Add IOC</span>
+          </button>
+        </div>
       </div>
 
       {/* ── Search + filter toolbar ──────────────────────────────────────── */}

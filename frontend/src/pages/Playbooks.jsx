@@ -1,11 +1,14 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
+import axios from 'axios';
 import {
   AlertOctagon,
   Ban,
   Bell,
   BookOpen,
   Check,
+  CheckCircle2,
   ChevronRight,
+  Clock,
   FileText,
   GripVertical,
   Link2,
@@ -18,6 +21,7 @@ import {
   Search,
   ShieldOff,
   Siren,
+  Terminal,
   Trash2,
   Wrench,
   X,
@@ -58,69 +62,6 @@ const SEVERITY_STYLES = {
   LOW:      { text: 'text-sky-300',    border: 'border-sky-500/25',    bg: 'bg-sky-500/10'    },
 };
 
-// ─── Mock data ────────────────────────────────────────────────────────────────
-const MOCK_ALERT_RULES = [
-  { id: 'ar-1', name: 'Brute Force Login',         condition: 'Failed logins > 10 in 5 min from same IP',  severity: 'CRITICAL' },
-  { id: 'ar-2', name: 'Outbound DNS Tunneling',    condition: 'DNS query volume > 500/min to external',     severity: 'HIGH'     },
-  { id: 'ar-3', name: 'Lateral Movement',          condition: 'Process spawn anomaly on workstation',       severity: 'HIGH'     },
-  { id: 'ar-4', name: 'Config File Modified',      condition: 'Critical file write outside change window',  severity: 'MEDIUM'   },
-  { id: 'ar-5', name: 'Suspicious PowerShell',     condition: 'Encoded PS1 execution on any endpoint',      severity: 'HIGH'     },
-  { id: 'ar-6', name: 'Internal Port Scan',        condition: 'Internal host scanning 3+ /24 subnets',      severity: 'MEDIUM'   },
-  { id: 'ar-7', name: 'Admin Group Modification',  condition: 'User added to privileged group',             severity: 'CRITICAL' },
-  { id: 'ar-8', name: 'SSL Certificate Expiry',    condition: 'TLS cert < 7 days to expiry',               severity: 'LOW'      },
-];
-
-const MOCK_PLAYBOOKS = [
-  {
-    id: 'pb-1',
-    name: 'Brute Force Response',
-    description: 'Automated response for brute force login attempts — block source, alert team, open ticket.',
-    triggerType: 'ALERT_RULE',
-    linkedAlertRuleId: 'ar-1',
-    status: 'ACTIVE',
-    createdAt: new Date(Date.now() - 7 * 86400000).toISOString(),
-    steps: [
-      { id: 's1', type: 'INVESTIGATE', title: 'Gather Login Context',      description: 'Pull last 100 auth events for source IP from log explorer.' },
-      { id: 's2', type: 'BLOCK',       title: 'Block Source IP',           description: 'Add source IP to firewall block-list via API.' },
-      { id: 's3', type: 'NOTIFY',      title: 'Notify SOC Team',           description: 'Send Slack alert to #soc-alerts with IP and event summary.' },
-      { id: 's4', type: 'TICKET',      title: 'Open Incident Ticket',      description: 'Auto-create P1 incident with pre-filled context.' },
-      { id: 's5', type: 'ESCALATE',    title: 'Escalate if Unresolved 2h', description: 'If ticket not resolved in 2h, escalate to team lead.' },
-    ],
-  },
-  {
-    id: 'pb-2',
-    name: 'Ransomware Containment',
-    description: 'Isolate infected endpoint, snapshot disk, notify IR team and preserve evidence.',
-    triggerType: 'MANUAL',
-    linkedAlertRuleId: null,
-    status: 'ACTIVE',
-    createdAt: new Date(Date.now() - 14 * 86400000).toISOString(),
-    steps: [
-      { id: 's1', type: 'INVESTIGATE', title: 'Identify Affected Assets',  description: 'Check lateral movement logs and file modification events.' },
-      { id: 's2', type: 'CONTAIN',     title: 'Isolate Endpoint',          description: 'Trigger EDR isolation API for affected workstation.' },
-      { id: 's3', type: 'INVESTIGATE', title: 'Snapshot Disk Image',       description: 'Initiate forensic disk snapshot for evidence preservation.' },
-      { id: 's4', type: 'NOTIFY',      title: 'Notify IR Team',            description: 'Page on-call IR analyst via PagerDuty integration.' },
-      { id: 's5', type: 'REMEDIATE',   title: 'Restore from Clean Backup', description: 'Restore endpoint from last known-good backup snapshot.' },
-      { id: 's6', type: 'TICKET',      title: 'Post-Incident Report',      description: 'Create follow-up ticket for PIR within 48h.' },
-    ],
-  },
-  {
-    id: 'pb-3',
-    name: 'Phishing Email Triage',
-    description: 'Automated triage for reported phishing emails — extract IOCs, scan mailboxes, block sender.',
-    triggerType: 'ALERT_RULE',
-    linkedAlertRuleId: 'ar-7',
-    status: 'DRAFT',
-    createdAt: new Date(Date.now() - 3 * 86400000).toISOString(),
-    steps: [
-      { id: 's1', type: 'INVESTIGATE', title: 'Extract Email IOCs',        description: 'Parse headers, links, and attachments for IOC indicators.' },
-      { id: 's2', type: 'BLOCK',       title: 'Block Sender Domain',       description: 'Add sender domain to email gateway block-list.' },
-      { id: 's3', type: 'REMEDIATE',   title: 'Sweep All Mailboxes',       description: 'Search and delete matching emails across all mailboxes.' },
-      { id: 's4', type: 'NOTIFY',      title: 'User Awareness Alert',      description: 'Send security awareness notice to all users in affected dept.' },
-    ],
-  },
-];
-
 const emptyStep = { id: '', type: 'NOTIFY', title: '', description: '', actionNotes: '' };
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -160,49 +101,157 @@ export default function Playbooks() {
   const { showToast } = useToast();
   const dragRef = useRef(null);
 
-  const [playbooks, setPlaybooks] = useState(MOCK_PLAYBOOKS);
-  const [selectedPbId, setSelectedPbId] = useState(MOCK_PLAYBOOKS[0].id);
-  const [steps, setSteps] = useState(MOCK_PLAYBOOKS[0].steps);
-  const [pbMeta, setPbMeta] = useState({ name: MOCK_PLAYBOOKS[0].name, description: MOCK_PLAYBOOKS[0].description, status: MOCK_PLAYBOOKS[0].status, linkedAlertRuleId: MOCK_PLAYBOOKS[0].linkedAlertRuleId });
+  const [playbooks, setPlaybooks] = useState([]);
+  const [alertRules, setAlertRules] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [selectedPbId, setSelectedPbId] = useState('');
+  const [steps, setSteps] = useState([]);
+  const [pbMeta, setPbMeta] = useState({ name: '', description: '', status: 'DRAFT', linkedAlertRuleId: null });
+
   const [dragOverIdx, setDragOverIdx] = useState(null);
   const [showStepEditor, setShowStepEditor] = useState(false);
-  const [editingStep, setEditingStep] = useState(null); // null = new
+  const [editingStep, setEditingStep] = useState(null);
   const [stepForm, setStepForm] = useState({ ...emptyStep });
   const [showLinkModal, setShowLinkModal] = useState(false);
-  const [isMock] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  // Simulation state
+  const [simulating, setSimulating] = useState(false);
+  const [simResult, setSimResult] = useState(null);
+  const [simVisibleSteps, setSimVisibleSteps] = useState(0);
+
+  // ── Load playbooks & rules ────────────────────────────────────────────────
+  const loadData = useCallback(async () => {
+    try {
+      setRefreshing(true);
+      const [pbRes, rulesRes] = await Promise.all([
+        axios.get('/api/playbooks'),
+        axios.get('/api/playbooks/alert-rules'),
+      ]);
+      setPlaybooks(pbRes.data);
+      setAlertRules(rulesRes.data);
+
+      if (pbRes.data.length > 0) {
+        const current = pbRes.data.find(p => p.id === selectedPbId) || pbRes.data[0];
+        setSelectedPbId(current.id);
+        setSteps([...(current.steps || [])]);
+        setPbMeta({
+          name: current.name,
+          description: current.description,
+          status: current.status,
+          linkedAlertRuleId: current.linkedAlertRuleId,
+        });
+      }
+    } catch (err) {
+      showToast({ type: 'error', message: 'Failed to fetch playbooks from server' });
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [selectedPbId, showToast]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   const selectedPb = playbooks.find((p) => p.id === selectedPbId);
-  const linkedRule = MOCK_ALERT_RULES.find((r) => r.id === pbMeta.linkedAlertRuleId);
+  const linkedRule = alertRules.find((r) => r.id === pbMeta.linkedAlertRuleId);
 
-  // ── Playbook selection ────────────────────────────────────────────────────
+  // ── Select playbook ─────────────────────────────────────────────────────────
   const selectPlaybook = (pb) => {
     setSelectedPbId(pb.id);
-    setSteps([...pb.steps]);
-    setPbMeta({ name: pb.name, description: pb.description, status: pb.status, linkedAlertRuleId: pb.linkedAlertRuleId });
+    setSteps([...(pb.steps || [])]);
+    setPbMeta({
+      name: pb.name,
+      description: pb.description,
+      status: pb.status,
+      linkedAlertRuleId: pb.linkedAlertRuleId,
+    });
   };
 
   // ── Save playbook ─────────────────────────────────────────────────────────
-  const handleSave = () => {
-    setPlaybooks((prev) =>
-      prev.map((p) => p.id === selectedPbId ? { ...p, ...pbMeta, steps } : p)
-    );
-    showToast({ type: 'success', message: 'Playbook saved. (Preview — backend pending)' });
+  const handleSave = async () => {
+    if (!selectedPbId) return;
+    setSaving(true);
+    try {
+      const payload = {
+        name: pbMeta.name,
+        description: pbMeta.description,
+        status: pbMeta.status,
+        linkedAlertRuleId: pbMeta.linkedAlertRuleId,
+        steps,
+      };
+      const res = await axios.put(`/api/playbooks/${selectedPbId}`, payload);
+      setPlaybooks((prev) => prev.map((p) => (p.id === selectedPbId ? res.data : p)));
+      showToast({ type: 'success', message: `Playbook "${res.data.name}" saved to database.` });
+    } catch (err) {
+      showToast({ type: 'error', message: err.response?.data?.message || 'Failed to save playbook' });
+    } finally {
+      setSaving(false);
+    }
   };
 
   // ── New playbook ──────────────────────────────────────────────────────────
-  const handleNewPlaybook = () => {
-    const newPb = {
-      id: `pb-${Date.now()}`,
-      name: 'New Playbook',
-      description: 'Describe this playbook response flow...',
-      triggerType: 'MANUAL',
-      linkedAlertRuleId: null,
-      status: 'DRAFT',
-      createdAt: new Date().toISOString(),
-      steps: [],
-    };
-    setPlaybooks((prev) => [newPb, ...prev]);
-    selectPlaybook(newPb);
+  const handleNewPlaybook = async () => {
+    try {
+      const payload = {
+        name: 'New Custom Playbook',
+        description: 'Describe this response automation workflow...',
+        status: 'DRAFT',
+        linkedAlertRuleId: null,
+        steps: [],
+      };
+      const res = await axios.post('/api/playbooks', payload);
+      setPlaybooks((prev) => [res.data, ...prev]);
+      selectPlaybook(res.data);
+      showToast({ type: 'success', message: 'New playbook created' });
+    } catch (err) {
+      showToast({ type: 'error', message: 'Failed to create new playbook' });
+    }
+  };
+
+  // ── Delete playbook ───────────────────────────────────────────────────────
+  const handleDeletePlaybook = async (id, e) => {
+    e.stopPropagation();
+    if (!window.confirm('Are you sure you want to delete this playbook?')) return;
+    try {
+      await axios.delete(`/api/playbooks/${id}`);
+      const remaining = playbooks.filter((p) => p.id !== id);
+      setPlaybooks(remaining);
+      if (remaining.length > 0) {
+        selectPlaybook(remaining[0]);
+      } else {
+        setSelectedPbId('');
+        setSteps([]);
+      }
+      showToast({ type: 'success', message: 'Playbook deleted' });
+    } catch (err) {
+      showToast({ type: 'error', message: 'Failed to delete playbook' });
+    }
+  };
+
+  // ── Run simulation ────────────────────────────────────────────────────────
+  const handleRunSimulation = async () => {
+    if (!selectedPbId) return;
+    setSimulating(true);
+    setSimResult(null);
+    setSimVisibleSteps(0);
+    try {
+      const res = await axios.post(`/api/playbooks/${selectedPbId}/simulate`);
+      setSimResult(res.data);
+      // Animate execution steps sequentially
+      const total = res.data.executedSteps?.length || 0;
+      for (let i = 1; i <= total; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 350));
+        setSimVisibleSteps(i);
+      }
+      showToast({ type: 'success', message: `Simulation completed successfully for "${res.data.playbookName}"` });
+    } catch (err) {
+      showToast({ type: 'error', message: 'Failed to execute simulation' });
+    } finally {
+      setSimulating(false);
+    }
   };
 
   // ── Drag & Drop ───────────────────────────────────────────────────────────
@@ -238,7 +287,7 @@ export default function Playbooks() {
       return;
     }
     if (editingStep) {
-      setSteps((prev) => prev.map((s) => s.id === editingStep ? { ...stepForm } : s));
+      setSteps((prev) => prev.map((s) => (s.id === editingStep ? { ...stepForm } : s)));
     } else {
       setSteps((prev) => [...prev, { ...stepForm }]);
     }
@@ -255,7 +304,14 @@ export default function Playbooks() {
     showToast({ type: 'success', message: ruleId ? 'Alert rule linked.' : 'Alert rule unlinked.' });
   };
 
-  // ─────────────────────────────────────────────────────────────────────────
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-24">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary/20 border-t-primary" />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-5 sc-fade-in">
 
@@ -267,23 +323,28 @@ export default function Playbooks() {
               <BookOpen className="h-2.5 w-2.5" /> Playbook Builder
             </span>
             <span className="sc-badge border-white/10 bg-white/5 text-slate-300">Module 10</span>
-            {isMock && (
-              <span className="sc-badge border-amber-500/20 bg-amber-500/10 text-amber-300">
-                ⚠ Preview — Backend Pending
-              </span>
-            )}
           </div>
           <h1 className="mt-3 text-2xl font-extrabold tracking-tight text-white">Playbook Automation</h1>
           <p className="mt-1 text-sm text-slate-400">
-            Build drag-and-drop response playbooks. Link to alert rules for automatic triggering.
+            Build drag-and-drop response playbooks. Link to alert rules for automatic triggering and run live response simulations.
           </p>
         </div>
-        <button
-          onClick={handleNewPlaybook}
-          className="c-p sc-button-primary px-5 py-2.5 text-xs font-semibold"
-        >
-          <Plus className="h-3.5 w-3.5" /> New Playbook
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={loadData}
+            disabled={refreshing}
+            className="c-p flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-xs font-semibold text-slate-300 hover:border-white/20 hover:text-white transition disabled:opacity-40"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin text-purple-400' : ''}`} />
+            Refresh
+          </button>
+          <button
+            onClick={handleNewPlaybook}
+            className="c-p sc-button-primary px-5 py-2.5 text-xs font-semibold"
+          >
+            <Plus className="h-3.5 w-3.5" /> New Playbook
+          </button>
+        </div>
       </div>
 
       {/* ── Two-panel layout ──────────────────────────────────────────────── */}
@@ -294,34 +355,43 @@ export default function Playbooks() {
           <div className="flex items-center justify-between border-b border-white/8 p-4">
             <p className="sc-text-kicker">Playbooks ({playbooks.length})</p>
           </div>
-          <div className="flex-1 overflow-y-auto divide-y divide-white/5">
+          <div className="flex-1 overflow-y-auto divide-y divide-white/5 max-h-[600px]">
             {playbooks.map((pb) => {
-              const rule = MOCK_ALERT_RULES.find((r) => r.id === pb.linkedAlertRuleId);
+              const rule = alertRules.find((r) => r.id === pb.linkedAlertRuleId);
               const isActive = pb.id === selectedPbId;
               return (
-                <button
+                <div
                   key={pb.id}
                   onClick={() => selectPlaybook(pb)}
-                  className={`c-p w-full p-4 text-left transition hover:bg-white/3 ${isActive ? 'bg-blue-500/8 border-l-2 border-sky-400' : ''}`}
+                  className={`c-p group w-full p-4 text-left transition hover:bg-white/3 ${isActive ? 'bg-blue-500/8 border-l-2 border-sky-400' : ''}`}
                 >
                   <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <p className={`text-sm font-semibold truncate ${isActive ? 'text-white' : 'text-slate-200'}`}>
                         {pb.name}
                       </p>
                       <p className="mt-0.5 text-[10px] font-mono text-slate-500 truncate">{pb.description}</p>
                     </div>
-                    <StatusBadge status={pb.status} />
+                    <div className="flex items-center gap-1.5">
+                      <StatusBadge status={pb.status} />
+                      <button
+                        onClick={(e) => handleDeletePlaybook(pb.id, e)}
+                        className="opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-red-400 transition"
+                        title="Delete playbook"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </div>
                   </div>
                   <div className="mt-2 flex items-center gap-3">
-                    <span className="text-[10px] font-mono text-slate-500">{pb.steps.length} steps</span>
+                    <span className="text-[10px] font-mono text-slate-500">{(pb.steps || []).length} steps</span>
                     {rule && (
                       <span className="inline-flex items-center gap-1 text-[10px] font-mono text-sky-400 truncate">
                         <Link2 className="h-2.5 w-2.5" /> {rule.name}
                       </span>
                     )}
                   </div>
-                </button>
+                </div>
               );
             })}
           </div>
@@ -385,7 +455,7 @@ export default function Playbooks() {
               </div>
 
               {/* Step canvas */}
-              <div className="flex-1 overflow-y-auto p-5">
+              <div className="flex-1 overflow-y-auto p-5 min-h-[300px]">
                 {steps.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-16 text-center">
                     <Zap className="mb-3 h-10 w-10 text-slate-700" />
@@ -400,7 +470,7 @@ export default function Playbooks() {
                       const { Icon } = def;
                       const isDragOver = dragOverIdx === idx;
                       return (
-                        <div key={step.id}>
+                        <div key={step.id || idx}>
                           {/* Drop indicator */}
                           {isDragOver && dragRef.current !== idx && (
                             <div className="h-1 rounded-full bg-sky-400/60 mx-4 mb-2 shadow-[0_0_8px_rgba(56,189,248,0.5)]" />
@@ -445,6 +515,11 @@ export default function Playbooks() {
                               <p className="text-sm font-semibold text-white">{step.title}</p>
                               {step.description && (
                                 <p className="mt-0.5 text-xs text-slate-500 leading-relaxed">{step.description}</p>
+                              )}
+                              {step.actionNotes && (
+                                <p className="mt-1 font-mono text-[10px] text-sky-400/80 bg-sky-500/5 px-2 py-0.5 rounded border border-sky-500/10 inline-block">
+                                  {step.actionNotes}
+                                </p>
                               )}
                             </div>
 
@@ -497,13 +572,28 @@ export default function Playbooks() {
                 <span className="text-[10px] font-mono text-slate-600">{steps.length} steps · {pbMeta.status}</span>
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => showToast({ type: 'info', message: 'Simulation run logged to audit trail. (Preview)' })}
-                    className="c-p sc-button-secondary px-4 py-2.5 text-xs font-semibold"
+                    onClick={handleRunSimulation}
+                    disabled={simulating || steps.length === 0}
+                    className="c-p sc-button-secondary px-4 py-2.5 text-xs font-semibold disabled:opacity-40"
                   >
-                    <Play className="h-3.5 w-3.5 text-emerald-300" /> Run Simulation
+                    {simulating ? (
+                      <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-emerald-300/30 border-t-emerald-300" />
+                    ) : (
+                      <Play className="h-3.5 w-3.5 text-emerald-300" />
+                    )}
+                    {simulating ? 'Simulating...' : 'Run Simulation'}
                   </button>
-                  <button onClick={handleSave} className="c-p sc-button-primary px-4 py-2.5 text-xs font-semibold">
-                    <Save className="h-3.5 w-3.5" /> Save Changes
+                  <button
+                    onClick={handleSave}
+                    disabled={saving}
+                    className="c-p sc-button-primary px-4 py-2.5 text-xs font-semibold disabled:opacity-40"
+                  >
+                    {saving ? (
+                      <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                    ) : (
+                      <Save className="h-3.5 w-3.5" />
+                    )}
+                    Save Changes
                   </button>
                 </div>
               </div>
@@ -627,7 +717,7 @@ export default function Playbooks() {
             )}
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {MOCK_ALERT_RULES.map((rule) => {
+              {alertRules.map((rule) => {
                 const isLinked = pbMeta.linkedAlertRuleId === rule.id;
                 return (
                   <button
@@ -658,6 +748,95 @@ export default function Playbooks() {
           </div>
         </div>
       )}
+
+      {/* ── Live Simulation Execution Engine Modal ──────────────────────────── */}
+      {simResult && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-md">
+          <div className="sc-modal relative w-full max-w-3xl overflow-hidden p-6 sc-scale-in space-y-4">
+            <button
+              onClick={() => setSimResult(null)}
+              className="c-p absolute right-4 top-4 text-slate-400 hover:text-white transition"
+            >
+              <X className="h-5 w-5" />
+            </button>
+
+            {/* Header */}
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-400">
+                <Play className="h-5 w-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="sc-badge border-emerald-500/30 bg-emerald-500/10 text-emerald-300">
+                    <CheckCircle2 className="h-3 w-3" /> Simulation Execution Report
+                  </span>
+                  <span className="font-mono text-xs text-slate-400">{simResult.executionTimeMs} ms</span>
+                </div>
+                <h3 className="mt-1 text-lg font-extrabold text-white">{simResult.playbookName}</h3>
+              </div>
+            </div>
+
+            {/* Trigger info */}
+            <div className="flex flex-wrap items-center justify-between rounded-xl border border-white/8 bg-white/3 px-4 py-2.5 text-xs font-mono text-slate-400">
+              <span>Triggered By: <strong className="text-white">{simResult.triggeredBy}</strong></span>
+              <span>Total Steps: <strong className="text-emerald-400">{simResult.totalSteps}</strong></span>
+              <span>Status: <strong className="text-emerald-400">COMPLETED</strong></span>
+            </div>
+
+            {/* Step execution checklist */}
+            <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Step Execution Stream</p>
+              {(simResult.executedSteps || []).slice(0, simVisibleSteps).map((step) => {
+                const def = STEP_TYPES.find((s) => s.type === step.type) ?? STEP_TYPES[0];
+                return (
+                  <div
+                    key={step.stepId || step.stepIndex}
+                    className="flex items-center justify-between rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3.5 py-2 text-xs sc-fade-in"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
+                      <span className="font-mono font-bold text-slate-300">Step {step.stepIndex}:</span>
+                      <span className="font-semibold text-white">{step.title}</span>
+                    </div>
+                    <div className="flex items-center gap-3 font-mono text-[10px]">
+                      <span className="text-emerald-400 font-bold">SUCCESS</span>
+                      <span className="text-slate-500">{step.durationMs}ms</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Simulation Console Log Box */}
+            <div>
+              <p className="mb-1.5 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                <Terminal className="h-3.5 w-3.5 text-sky-400" /> Automation Console Output
+              </p>
+              <div className="rounded-xl border border-white/10 bg-[#050a14] p-3 font-mono text-xs text-sky-300 space-y-1.5 max-h-[160px] overflow-y-auto">
+                {(simResult.executedSteps || []).slice(0, simVisibleSteps).map((step) => (
+                  <div key={step.stepId || step.stepIndex} className="leading-relaxed">
+                    <span className="text-slate-500">[{new Date().toLocaleTimeString()}]</span>{' '}
+                    <span className="text-emerald-400 font-bold">{step.type}</span> — {step.logOutput}
+                  </div>
+                ))}
+                {simVisibleSteps < (simResult.executedSteps?.length || 0) && (
+                  <div className="animate-pulse text-slate-500 italic">Executing next step...</div>
+                )}
+              </div>
+            </div>
+
+            <div className="pt-2 flex justify-end">
+              <button
+                onClick={() => setSimResult(null)}
+                className="sc-button-primary px-5 py-2 text-xs font-semibold"
+              >
+                Close Report
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
