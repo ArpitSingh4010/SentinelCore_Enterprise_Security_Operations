@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   BellRing,
   Check,
+  CheckCircle2,
   ChevronDown,
   Clock,
   Filter,
@@ -126,7 +127,7 @@ export default function Alerts() {
     setLoading(true);
     setError('');
     try {
-      const response = await axios.get('/api/alerts');
+      const response = await axios.get('/api/alerts?size=200');
       const data = response.data?.content ?? response.data ?? [];
       if (Array.isArray(data) && data.length >= 0) {
         setAlerts(data);
@@ -135,7 +136,7 @@ export default function Alerts() {
         throw new Error('unexpected shape');
       }
     } catch {
-      // Backend alert endpoint not ready yet — show mock data
+      // Backend alert endpoint fallback — show mock data
       setAlerts(MOCK_ALERTS);
       setIsMock(true);
     } finally {
@@ -187,20 +188,37 @@ export default function Alerts() {
 
   const patchAlert = async (id, endpoint, successMsg) => {
     if (isMock) {
-      // Optimistic update on mock data
       setAlerts((prev) =>
         prev.map((a) =>
           a.id === id
-            ? { ...a, status: endpoint === 'acknowledge' ? 'ACKNOWLEDGED' : 'DISMISSED' }
+            ? {
+                ...a,
+                status:
+                  endpoint === 'acknowledge'
+                    ? 'ACKNOWLEDGED'
+                    : endpoint === 'resolve'
+                    ? 'RESOLVED'
+                    : 'DISMISSED',
+              }
             : a
         )
       );
-      showToast({ type: 'success', message: successMsg + ' (preview — backend pending)' });
+      showToast({ type: 'success', message: successMsg + ' (preview mode)' });
       return;
     }
     setLoaderFor(id, true);
     try {
-      await axios.put(`/api/alerts/${id}/${endpoint}`);
+      const statusMap = {
+        acknowledge: 'ACKNOWLEDGED',
+        dismiss: 'DISMISSED',
+        resolve: 'RESOLVED',
+      };
+      const targetStatus = statusMap[endpoint] || 'RESOLVED';
+      try {
+        await axios.put(`/api/alerts/${id}/status`, { status: targetStatus });
+      } catch (firstErr) {
+        await axios.put(`/api/alerts/${id}/${endpoint}`);
+      }
       showToast({ type: 'success', message: successMsg });
       fetchAlerts();
       if (selectedAlert?.id === id) setSelectedAlert(null);
@@ -213,6 +231,7 @@ export default function Alerts() {
 
   const handleAcknowledge = (id) => patchAlert(id, 'acknowledge', 'Alert acknowledged.');
   const handleDismiss     = (id) => patchAlert(id, 'dismiss',     'Alert dismissed.');
+  const handleResolve     = (id) => patchAlert(id, 'resolve',     'Alert marked as resolved.');
 
   // ── Create incident from alert ────────────────────────────────────────────
   const openCreateIncident = (alert) => {
@@ -444,6 +463,16 @@ export default function Alerts() {
                             )}
                             {(isOpen || isAcknowledged) && (
                               <button
+                                onClick={() => handleResolve(alert.id)}
+                                disabled={isLoading}
+                                title="Mark Resolved"
+                                className="c-p flex items-center gap-1 rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1.5 text-[10px] text-emerald-300 transition hover:bg-emerald-500/25 disabled:opacity-40"
+                              >
+                                <CheckCircle2 className="h-3 w-3" /> Resolve
+                              </button>
+                            )}
+                            {(isOpen || isAcknowledged) && (
+                              <button
                                 onClick={() => handleDismiss(alert.id)}
                                 disabled={isLoading}
                                 title="Dismiss"
@@ -537,6 +566,14 @@ export default function Alerts() {
                       className="c-p sc-button-secondary w-full px-4 py-2.5 text-xs font-semibold"
                     >
                       <Check className="h-3.5 w-3.5 text-amber-300" /> Acknowledge Alert
+                    </button>
+                  )}
+                  {['OPEN','ACKNOWLEDGED'].includes(selectedAlert.status?.toUpperCase()) && (
+                    <button
+                      onClick={() => { handleResolve(selectedAlert.id); setSelectedAlert(null); }}
+                      className="c-p flex items-center justify-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2.5 text-xs font-semibold text-emerald-300 transition hover:bg-emerald-500/20"
+                    >
+                      <CheckCircle2 className="h-3.5 w-3.5" /> Mark as Resolved
                     </button>
                   )}
                   {['OPEN','ACKNOWLEDGED'].includes(selectedAlert.status?.toUpperCase()) && (

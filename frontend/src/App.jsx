@@ -12,7 +12,6 @@ import Dashboard from './pages/Dashboard';
 import AuditLogs from './pages/AuditLogs';
 import Alerts from './pages/Alerts';
 import Incidents from './pages/Incidents';
-import Threats from './pages/Threats';
 import Vulnerabilities from './pages/Vulnerabilities';
 import Assets from './pages/Assets';
 import Logs from './pages/Logs';
@@ -126,15 +125,6 @@ function App() {
             />
 
             <Route
-              path="/threats"
-              element={
-                <ProtectedRoute>
-                  <Threats />
-                </ProtectedRoute>
-              }
-            />
-
-            <Route
               path="/alerts"
               element={
                 <ProtectedRoute>
@@ -176,6 +166,22 @@ function App() {
               }
             />
             <Route
+              path="/reports"
+              element={
+                <ProtectedRoute>
+                  <Reports />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/playbooks"
+              element={
+                <ProtectedRoute>
+                  <Playbooks />
+                </ProtectedRoute>
+              }
+            />
+                        <Route
               path="/reports"
               element={
                 <ProtectedRoute>

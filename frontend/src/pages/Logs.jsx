@@ -129,7 +129,8 @@ export default function Logs() {
       if (startDate)  params.startDate  = new Date(startDate).toISOString();
       if (endDate)    params.endDate    = new Date(endDate).toISOString();
       const response = await axios.get('/api/logs', { params });
-      setLogs(response.data || []);
+      const data = response.data?.content ?? response.data ?? [];
+      setLogs(Array.isArray(data) ? data : []);
     } catch {
       setError('Failed to fetch security logs database.');
     } finally {

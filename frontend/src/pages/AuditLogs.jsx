@@ -254,7 +254,7 @@ export default function AuditLogs() {
             <span className="sc-badge border-white/10 bg-white/5 text-slate-300">{user?.role} scope</span>
             <span className="sc-badge border-white/10 bg-white/5 text-slate-400">{totalElements} events</span>
           </div>
-          <h1 className="mt-3 text-2xl font-extrabold tracking-tight text-white">Audit Log Viewer</h1>
+          <h1 className="mt-3 text-2xl font-extrabold tracking-tight text-white">Audit Trails</h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-400">
             Immutable record of all authentication, user, team, and system actions. Expand any row to see before/after field diff.
           </p>

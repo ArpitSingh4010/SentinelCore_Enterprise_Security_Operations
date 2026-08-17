@@ -11,3 +11,4 @@ public class SentinelCoreApplication {
         SpringApplication.run(SentinelCoreApplication.class, args);
     }
 }
+

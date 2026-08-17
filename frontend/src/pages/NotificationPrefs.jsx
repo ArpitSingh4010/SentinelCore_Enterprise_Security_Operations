@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
 import {
   Bell, Mail, MessageSquare, Phone, Webhook, Shield, Bug, Siren,
   AlertTriangle, CheckCircle2, X, Plus, Trash2, GripVertical,
   Clock, Users, ChevronDown, ChevronUp, ToggleLeft, ToggleRight,
-  Moon, Save, RefreshCw, Info,
+  Moon, Save, RefreshCw, Info, Loader2
 } from 'lucide-react';
 import { useToast } from '../components/Toast';
 
@@ -89,7 +90,7 @@ const EVENT_TYPES = [
 ];
 
 // ─── Escalation chain builder ──────────────────────────────────────────────────
-const ESCALATION_ROLES = ['Analyst', 'Senior Analyst', 'Team Lead', 'Security Manager', 'CISO'];
+const ESCALATION_ROLES = ['Analyst', 'Team Lead', 'Administrator', 'All SOC Members'];
 
 function EscalationChain({ chain, onChange }) {
   const addStep = () => {
@@ -134,7 +135,7 @@ function EscalationChain({ chain, onChange }) {
               <span className="text-[10px] font-mono text-slate-500">After</span>
               <input
                 type="number"
-                min="1" max="1440"
+                min="0" max="1440"
                 value={step.delayMinutes}
                 onChange={(e) => updateStep(step.id, 'delayMinutes', parseInt(e.target.value, 10))}
                 className="w-16 rounded-xl border border-white/8 bg-[#0b1220] px-2 py-1.5 text-center text-xs text-white focus:outline-none"
@@ -234,6 +235,8 @@ function ChannelCard({ ch, config, onToggle, onFieldChange }) {
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function NotificationPrefs() {
   const { showToast } = useToast();
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
   // Channel configs
   const [channelConfigs, setChannelConfigs] = useState(
@@ -247,9 +250,9 @@ export default function NotificationPrefs() {
 
   // Escalation chain
   const [chain, setChain] = useState([
-    { id: 1, role: 'Analyst',        delayMinutes: 0,  channel: 'email'  },
-    { id: 2, role: 'Senior Analyst', delayMinutes: 15, channel: 'slack'  },
-    { id: 3, role: 'Team Lead',      delayMinutes: 30, channel: 'pagerduty' },
+    { id: 1, role: 'Analyst',       delayMinutes: 0,  channel: 'email'  },
+    { id: 2, role: 'Team Lead',     delayMinutes: 15, channel: 'slack'  },
+    { id: 3, role: 'Administrator', delayMinutes: 30, channel: 'pagerduty' },
   ]);
 
   // Quiet hours
@@ -262,6 +265,48 @@ export default function NotificationPrefs() {
   const [digestEnabled,   setDigestEnabled]   = useState(true);
   const [digestFrequency, setDigestFrequency] = useState('Daily');
 
+  // Escalation status
+  const [escalationSequence, setEscalationSequence] = useState(null);
+
+  useEffect(() => {
+    const fetchPreferences = async () => {
+      try {
+        setLoading(true);
+        const [prefRes, escRes] = await Promise.all([
+          axios.get('/api/notifications/preferences'),
+          axios.get('/api/notifications/escalation-sequence').catch(() => ({ data: null })),
+        ]);
+
+        const data = prefRes.data;
+        if (data) {
+          if (data.channels) setChannelConfigs((prev) => ({ ...prev, ...data.channels }));
+          if (data.events) setEventToggles((prev) => ({ ...prev, ...data.events }));
+          if (data.escalationChain && Array.isArray(data.escalationChain)) setChain(data.escalationChain);
+          if (data.quietHours) {
+            setQuietEnabled(data.quietHours.enabled ?? false);
+            setQuietFrom(data.quietHours.from || '22:00');
+            setQuietTo(data.quietHours.to || '07:00');
+            if (Array.isArray(data.quietHours.days)) setQuietDays(data.quietHours.days);
+          }
+          if (data.digest) {
+            setDigestEnabled(data.digest.enabled ?? true);
+            setDigestFrequency(data.digest.frequency || 'Daily');
+          }
+        }
+        if (escRes.data) {
+          setEscalationSequence(escRes.data);
+        }
+      } catch (err) {
+        console.error('Failed to load notification preferences', err);
+        showToast({ type: 'error', message: 'Failed to load user notification preferences' });
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchPreferences();
+  }, []);
+
   const toggleChannel    = (id, val)   => setChannelConfigs((prev) => ({ ...prev, [id]: { ...prev[id], enabled: val } }));
   const setChannelField  = (id, k, v) => setChannelConfigs((prev) => ({ ...prev, [id]: { ...prev[id], [k]: v } }));
   const toggleEvent      = (id)        => setEventToggles((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -270,13 +315,44 @@ export default function NotificationPrefs() {
   const enabledChannels = CHANNELS.filter((ch) => channelConfigs[ch.id]?.enabled).length;
   const enabledEvents   = Object.values(eventToggles).filter(Boolean).length;
 
-  const handleSave = () => {
-    showToast({ type: 'success', message: 'Notification preferences saved successfully' });
+  const handleSave = async () => {
+    try {
+      setSaving(true);
+      const payload = {
+        channels: channelConfigs,
+        events: eventToggles,
+        escalationChain: chain,
+        quietHours: {
+          enabled: quietEnabled,
+          from: quietFrom,
+          to: quietTo,
+          days: quietDays,
+        },
+        digest: {
+          enabled: digestEnabled,
+          frequency: digestFrequency,
+        },
+      };
+      await axios.put('/api/notifications/preferences', payload);
+      showToast({ type: 'success', message: 'Notification preferences saved successfully for your profile' });
+    } catch (err) {
+      console.error('Failed to save notification preferences', err);
+      showToast({ type: 'error', message: 'Failed to save notification preferences' });
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleTest = (channelId) => {
-    showToast({ type: 'info', message: `Test notification sent via ${CHANNELS.find((c) => c.id === channelId)?.label}` });
+  const handleTest = async (channelId) => {
+    try {
+      const channelLabel = CHANNELS.find((c) => c.id === channelId)?.label;
+      const res = await axios.post(`/api/notifications/test-channel/${channelId}`, channelConfigs[channelId] || {});
+      showToast({ type: 'success', message: res.data?.message || `Test alert sent successfully via ${channelLabel}` });
+    } catch (err) {
+      showToast({ type: 'error', message: `Failed to dispatch test notification for ${channelId}` });
+    }
   };
+
 
   return (
     <div className="space-y-6 sc-fade-in">
@@ -370,13 +446,64 @@ export default function NotificationPrefs() {
       {/* ── Escalation chain + Quiet hours (side by side) ───────────────── */}
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
         {/* Escalation chain */}
-        <div className="sc-panel p-5">
-          <div className="mb-4">
+        <div className="sc-panel p-5 space-y-4">
+          <div>
             <p className="sc-text-kicker">Escalation Chain</p>
             <h2 className="mt-1 text-base font-bold text-white">Auto-Escalation Sequence</h2>
             <p className="mt-1 text-xs text-slate-500">When a critical alert is unacknowledged, escalate through this chain.</p>
           </div>
           <EscalationChain chain={chain} onChange={setChain} />
+
+          {/* Active Auto-Escalation Status Monitor */}
+          <div className="mt-4 border-t border-white/8 pt-4">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[11px] font-mono uppercase tracking-wider text-sky-400 font-bold flex items-center gap-1.5">
+                <Siren className="h-3.5 w-3.5 animate-pulse text-amber-400" />
+                Live Sequence Monitor
+              </span>
+              <span className="text-[10px] font-mono text-slate-400">
+                {escalationSequence?.totalActive || 0} active unacknowledged security items
+              </span>
+            </div>
+            {escalationSequence?.items && escalationSequence.items.length > 0 ? (
+              <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                {escalationSequence.items.map((item) => {
+                  const esc = item.escalation || {};
+                  const assignedUsers = esc.assignedUsers || [];
+                  const userNames = assignedUsers.map((u) => u.name || u.email).join(', ');
+                  return (
+                    <div key={item.id} className="rounded-xl border border-white/8 bg-white/3 p-2.5 text-xs flex items-center justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-semibold text-white truncate">{item.title}</p>
+                        <p className="text-[10px] font-mono text-slate-400 mt-0.5">
+                          Step {esc.currentStepNumber}/{esc.totalSteps}: <span className="text-sky-300 font-bold">{esc.currentRole}</span> via <span className="text-purple-300">{esc.currentChannel}</span>
+                        </p>
+                        {userNames && (
+                          <p className="text-[10px] text-emerald-400 font-mono mt-0.5 truncate">
+                            Target: {userNames}
+                          </p>
+                        )}
+                      </div>
+                      <div className="text-right shrink-0">
+                        {esc.isEscalated ? (
+                          <span className="sc-badge border-red-500/30 bg-red-500/10 text-red-300 text-[9px]">ESCALATED</span>
+                        ) : (
+                          <span className="sc-badge border-amber-500/30 bg-amber-500/10 text-amber-300 text-[9px]">LEVEL 1</span>
+                        )}
+                        {esc.nextRole && esc.minutesUntilNextEscalation >= 0 && (
+                          <p className="text-[9px] font-mono text-slate-500 mt-0.5">Next in {esc.minutesUntilNextEscalation}m ({esc.nextRole})</p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="rounded-xl border border-dashed border-white/8 p-3 text-center text-xs font-mono text-slate-500">
+                No active unacknowledged alerts currently in escalation sequence.
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Quiet hours + digest */}
@@ -482,16 +609,22 @@ export default function NotificationPrefs() {
         </p>
         <div className="flex items-center gap-3">
           <button
-            onClick={() => showToast({ type: 'info', message: 'Settings reset to defaults' })}
+            onClick={() => {
+              setChannelConfigs(CHANNELS.reduce((acc, ch) => ({ ...acc, [ch.id]: { enabled: ch.id === 'email' } }), {}));
+              setEventToggles(EVENT_TYPES.reduce((acc, et) => ({ ...acc, [et.id]: et.defaultOn }), {}));
+              showToast({ type: 'info', message: 'Settings reset to defaults' });
+            }}
             className="sc-button-secondary px-4 py-2 text-sm font-semibold"
           >
             <RefreshCw className="h-4 w-4" /> Reset
           </button>
           <button
             onClick={handleSave}
-            className="sc-button-primary px-5 py-2 text-sm font-semibold"
+            disabled={saving}
+            className="sc-button-primary px-5 py-2 text-sm font-semibold disabled:opacity-50"
           >
-            <Save className="h-4 w-4" /> Save Preferences
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            {saving ? 'Saving...' : 'Save Preferences'}
           </button>
         </div>
       </div>

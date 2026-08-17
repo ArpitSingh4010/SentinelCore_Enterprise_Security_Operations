@@ -50,7 +50,7 @@ public class SecurityConfig {
             .csrf(AbstractHttpConfigurer::disable)
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/api/auth/register", "/api/auth/login").permitAll()
+                .requestMatchers("/api/auth/register", "/api/auth/login", "/ws/**").permitAll()
                 
                 // User CRUD authorization rules
                 .requestMatchers(HttpMethod.GET, "/api/users/**").hasAnyRole("ADMIN", "ANALYST", "VIEWER")
@@ -75,6 +75,12 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.POST, "/api/assets/**").hasAnyRole("ADMIN", "ANALYST")
                 .requestMatchers(HttpMethod.DELETE, "/api/assets/**").hasRole("ADMIN")
 
+                // Vulnerability Management authorization rules
+                .requestMatchers(HttpMethod.GET, "/api/vulnerabilities/**").hasAnyRole("ADMIN", "ANALYST", "VIEWER")
+                .requestMatchers(HttpMethod.POST, "/api/vulnerabilities/**").hasAnyRole("ADMIN", "ANALYST")
+                .requestMatchers(HttpMethod.PUT, "/api/vulnerabilities/**").hasAnyRole("ADMIN", "ANALYST")
+                .requestMatchers(HttpMethod.DELETE, "/api/vulnerabilities/**").hasRole("ADMIN")
+
                 // Threat Intelligence authorization rules
                 .requestMatchers(HttpMethod.GET, "/api/threat-intel/**").hasAnyRole("ADMIN", "ANALYST", "VIEWER")
                 .requestMatchers(HttpMethod.POST, "/api/threat-intel/**").hasAnyRole("ADMIN", "ANALYST")
@@ -85,11 +91,20 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.POST, "/api/logs/**").hasAnyRole("ADMIN", "ANALYST")
                 .requestMatchers(HttpMethod.DELETE, "/api/logs/**").hasRole("ADMIN")
 
+                // Alert Management authorization rules
+                .requestMatchers(HttpMethod.GET, "/api/alerts/**").hasAnyRole("ADMIN", "ANALYST", "VIEWER")
+                .requestMatchers(HttpMethod.PUT, "/api/alerts/**").hasAnyRole("ADMIN", "ANALYST")
+                .requestMatchers(HttpMethod.POST, "/api/alerts/**").hasAnyRole("ADMIN", "ANALYST")
+
                 // Audit Logs authorization rules
                 .requestMatchers("/api/audit-logs/**").hasAnyRole("ADMIN", "ANALYST")
 
                 // Dashboard stats
                 .requestMatchers("/api/dashboard/**").hasAnyRole("ADMIN", "ANALYST", "VIEWER")
+                .requestMatchers("/api/notifications/**").hasAnyRole("ADMIN", "ANALYST", "VIEWER")
+                .requestMatchers("/api/compliance/**").hasAnyRole("ADMIN", "ANALYST", "VIEWER")
+                .requestMatchers("/api/playbooks/**").hasAnyRole("ADMIN", "ANALYST", "VIEWER")
+                .requestMatchers(HttpMethod.GET, "/api/risk/**").hasAnyRole("ADMIN", "ANALYST", "VIEWER")
                 
                 // Allow profile and logout
                 .requestMatchers("/api/auth/profile", "/api/auth/logout").authenticated()

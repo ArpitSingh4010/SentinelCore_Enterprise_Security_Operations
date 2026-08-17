@@ -17,19 +17,19 @@ import {
 } from 'lucide-react';
 
 // ─── Risk score helpers (Module 15) ────────────────────────────────────────────
-// Deterministic mock — replace with asset.riskScore when backend adds the field
 function getAssetRiskScore(asset) {
-  const base = { CRITICAL: 72, HIGH: 54, MEDIUM: 36, LOW: 18 }[asset.criticality] ?? 30;
-  const idHash = (asset.id || '').split('').reduce((acc, c) => acc + c.charCodeAt(0), 0) % 20;
-  const offlinePenalty = asset.status === 'OFFLINE' ? 10 : 0;
-  return Math.min(100, base + idHash + offlinePenalty);
+  return asset.riskScore || 0;
+}
+
+function normalizeCriticality(value) {
+  return String(value || 'MEDIUM').toUpperCase();
 }
 
 function RiskBadge({ score }) {
   const cfg =
-    score >= 80 ? { cls: 'border-red-500/25 bg-red-500/15 text-red-300' }
-    : score >= 60 ? { cls: 'border-orange-500/25 bg-orange-500/15 text-orange-300' }
-    : score >= 40 ? { cls: 'border-amber-500/25 bg-amber-500/15 text-amber-300' }
+    score >= 60 ? { cls: 'border-red-500/25 bg-red-500/15 text-red-300' }
+    : score >= 48 ? { cls: 'border-orange-500/25 bg-orange-500/15 text-orange-300' }
+    : score >= 32 ? { cls: 'border-amber-500/25 bg-amber-500/15 text-amber-300' }
     : { cls: 'border-emerald-500/25 bg-emerald-500/15 text-emerald-300' };
   return (
     <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[9px] font-bold font-mono tracking-[0.14em] ${cfg.cls}`}>
@@ -62,6 +62,14 @@ const RISK_FILTERS = [
   { val: 'MEDIUM',   label: 'Medium ≥40',      inactiveCls: 'border-amber-500/30 text-amber-400'   },
   { val: 'LOW',      label: 'Low <40',         inactiveCls: 'border-emerald-500/30 text-emerald-400'},
 ];
+
+const RISK_FILTER_LABELS = {
+  ALL: 'All Risk',
+  CRITICAL: 'Critical >=60',
+  HIGH: 'High >=48',
+  MEDIUM: 'Medium >=32',
+  LOW: 'Low <32',
+};
 
 export default function Assets() {
   const [assets, setAssets] = useState([]);
@@ -101,8 +109,18 @@ export default function Assets() {
   const fetchAssets = async () => {
     setLoading(true);
     try {
-      const response = await axios.get('/api/assets');
-      setAssets(response.data);
+      const [assetsRes, riskRes] = await Promise.all([
+        axios.get('/api/assets'),
+        axios.get('/api/risk/assets').catch(() => ({ data: [] }))
+      ]);
+      const riskMap = {};
+      riskRes.data.forEach(r => { riskMap[r.assetId] = r.riskScore; });
+      const enrichedAssets = assetsRes.data.map(a => ({
+        ...a,
+        criticality: normalizeCriticality(a.criticality),
+        riskScore: riskMap[a.id] ?? a.riskScore ?? 0
+      }));
+      setAssets(enrichedAssets);
     } catch (err) {
       console.error(err);
       setError('Failed to fetch corporate assets registry.');
@@ -139,10 +157,10 @@ export default function Assets() {
     if (riskFilter !== 'ALL') {
       list = list.filter((a) => {
         const rs = getAssetRiskScore(a);
-        if (riskFilter === 'CRITICAL') return rs >= 80;
-        if (riskFilter === 'HIGH')     return rs >= 60 && rs < 80;
-        if (riskFilter === 'MEDIUM')   return rs >= 40 && rs < 60;
-        if (riskFilter === 'LOW')      return rs < 40;
+        if (riskFilter === 'CRITICAL') return rs >= 60;
+        if (riskFilter === 'HIGH')     return rs >= 48 && rs < 60;
+        if (riskFilter === 'MEDIUM')   return rs >= 32 && rs < 48;
+        if (riskFilter === 'LOW')      return rs < 32;
         return true;
       });
     }
@@ -159,8 +177,8 @@ export default function Assets() {
       let valA = a[key];
       let valB = b[key];
       if (key === 'criticality') {
-        valA = CRITICALITY_ORDER[valA] ?? 99;
-        valB = CRITICALITY_ORDER[valB] ?? 99;
+        valA = CRITICALITY_ORDER[normalizeCriticality(valA)] ?? 99;
+        valB = CRITICALITY_ORDER[normalizeCriticality(valB)] ?? 99;
       } else if (key === 'lastSeen') {
         valA = new Date(valA).getTime();
         valB = new Date(valB).getTime();
@@ -412,7 +430,7 @@ export default function Assets() {
         {/* Risk filter chips — Module 15 */}
         <div className="flex items-center gap-1 flex-wrap">
           <span className="text-[10px] font-mono text-gray-600 uppercase tracking-wider mr-1">Risk:</span>
-          {RISK_FILTERS.map(({ val, label, inactiveCls }) => (
+          {RISK_FILTERS.map(({ val, inactiveCls }) => (
             <button
               key={val}
               onClick={() => setRiskFilter(val)}
@@ -422,7 +440,7 @@ export default function Assets() {
                   : `${inactiveCls} bg-white/3 hover:border-white/15`
               }`}
             >
-              {label}
+              {RISK_FILTER_LABELS[val]}
             </button>
           ))}
         </div>
@@ -450,6 +468,9 @@ export default function Assets() {
           </div>
         ) : (
           displayedAssets.map((item) => (
+            (() => {
+              const criticality = normalizeCriticality(item.criticality);
+              return (
             <div
               key={item.id}
               className="glass-card p-6 border border-dark-border hover:border-dark-border/100 duration-200 transition flex flex-col justify-between"
@@ -463,14 +484,14 @@ export default function Assets() {
                     {/* Criticality badge */}
                     <span
                       className={`inline-block px-2.5 py-0.5 rounded text-[9px] font-bold font-mono border ${
-                        item.criticality === 'CRITICAL'
+                        criticality === 'CRITICAL'
                           ? 'bg-red-500/10 text-red-400 border-red-500/20'
-                          : item.criticality === 'HIGH'
+                          : criticality === 'HIGH'
                           ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
                           : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
                       }`}
                     >
-                      {item.criticality}
+                      {criticality}
                     </span>
                     {/* Risk badge — Module 15 */}
                     <RiskBadge score={getAssetRiskScore(item)} />
@@ -525,6 +546,8 @@ export default function Assets() {
                 </button>
               </div>
             </div>
+              );
+            })()
           ))
         )}
       </div>

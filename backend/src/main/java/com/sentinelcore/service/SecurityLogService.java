@@ -9,7 +9,9 @@ import com.sentinelcore.repository.AssetRepository;
 import com.sentinelcore.repository.SecurityLogRepository;
 import com.sentinelcore.repository.ThreatIntelRepository;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.domain.Sort;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
@@ -35,6 +37,27 @@ public class SecurityLogService {
     private static final Pattern EMAIL_PATTERN = Pattern.compile("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}");
     private static final Pattern PORT_PATTERN = Pattern.compile("(?i)\\bport[=: ]+(\\d{1,5})\\b");
     private static final Pattern BYTES_PATTERN = Pattern.compile("(?i)\\bbytes[=: ]+(\\d+)\\b");
+    private static final List<Pattern> SQL_INJECTION_PATTERNS = List.of(
+            Pattern.compile("(?i)(?:'|%27)\\s*(?:or|and)\\s*(?:'|%27)?\\d+(?:'|%27)?\\s*=\\s*(?:'|%27)?\\d+"),
+            Pattern.compile("(?i)\\bunion\\s+(?:all\\s+)?select\\b"),
+            Pattern.compile("(?i)\\bselect\\b.+\\bfrom\\b.+\\bwhere\\b"),
+            Pattern.compile("(?i)\\b(?:drop|alter|truncate)\\s+table\\b"),
+            Pattern.compile("(?i)(?:--|#|/\\*|%2d%2d|%23|%2f\\*)"),
+            Pattern.compile("(?i)\\b(?:sleep|benchmark|xp_cmdshell|information_schema)\\s*\\(")
+    );
+    private static final List<Pattern> RANSOMWARE_PATTERNS = List.of(
+            Pattern.compile("(?i)\\bransomware\\b|\\bransom\\s+note\\b|\\bdecrypt(?:ion)?\\s+key\\b"),
+            Pattern.compile("(?i)\\b(?:vssadmin\\s+delete\\s+shadows|wmic\\s+shadowcopy\\s+delete|bcdedit\\s+/set)\\b"),
+            Pattern.compile("(?i)\\b(?:cipher\\s+/w|wevtutil\\s+cl|wbadmin\\s+delete\\s+catalog)\\b"),
+            Pattern.compile("(?i)\\.(?:locked|lockbit|conti|akira|blackcat|enc|encrypted)\\b"),
+            Pattern.compile("(?i)\\bmass\\s+(?:file\\s+)?(?:rename|encrypt|modification)\\b")
+    );
+    private static final List<Pattern> FAILED_LOGIN_PATTERNS = List.of(
+            Pattern.compile("(?i)\\bfailed\\s+(?:login|logon|authentication|password)\\b"),
+            Pattern.compile("(?i)\\blogin\\s+failed\\b|\\blogon\\s+failure\\b|\\bauthentication\\s+failure\\b"),
+            Pattern.compile("(?i)\\binvalid\\s+(?:password|credentials)\\b"),
+            Pattern.compile("(?i)\\bwindows\\s+event\\s+4625\\b|\\bevent\\s?id[=: ]4625\\b|\\bsshd\\b.+\\bfailed\\s+password\\b")
+    );
 
     @Autowired
     private SecurityLogRepository securityLogRepository;
@@ -51,7 +74,13 @@ public class SecurityLogService {
     @Autowired
     private AuditLogService auditLogService;
 
-    public List<SecurityLog> getLogs(String search, String systemType, Boolean isAnomaly, String startDate, String endDate) {
+    @Autowired(required = false)
+    private LiveEventService liveEventService;
+
+    @Autowired
+    private AlertService alertService;
+
+    public Page<SecurityLog> getLogs(String search, String systemType, Boolean isAnomaly, String startDate, String endDate, Pageable pageable) {
         Query query = new Query();
         List<Criteria> criteria = new ArrayList<>();
 
@@ -76,8 +105,10 @@ public class SecurityLogService {
             query.addCriteria(new Criteria().andOperator(criteria.toArray(new Criteria[0])));
         }
 
-        query.with(Sort.by(Sort.Direction.DESC, "timestamp"));
-        return mongoTemplate.find(query, SecurityLog.class);
+        long total = mongoTemplate.count(query, SecurityLog.class);
+        query.with(pageable);
+        List<SecurityLog> logs = mongoTemplate.find(query, SecurityLog.class);
+        return new PageImpl<>(logs, pageable, total);
     }
 
     public int uploadLogs(MultipartFile file, String systemType, String currentUserEmail) {
@@ -101,6 +132,20 @@ public class SecurityLogService {
         }
 
         securityLogRepository.saveAll(logs);
+        
+        // Trigger Alert Engine
+        alertService.processLogs(logs);
+        for (SecurityLog log : logs) {
+            if (log.isAnomaly()) {
+                alertService.processAuditAnomaly(
+                        "Anomalous Activity Detected: " + log.getSystemType(),
+                        "Detected threat in ingested log: " + log.getRawMessage(),
+                        log.getRiskScore() != null && log.getRiskScore() >= 0.90 ? "CRITICAL" : "HIGH",
+                        log.getIpAddress()
+                );
+            }
+        }
+        
         auditLogService.log(null, currentUserEmail, "LOGS_UPLOADED", "LOG_MANAGEMENT",
                 "Uploaded " + logs.size() + " " + systemType + " log records");
         return logs.size();
@@ -120,6 +165,30 @@ public class SecurityLogService {
         Integer port = parseInteger(firstMatch(PORT_PATTERN, rawMessage, 1));
         Long bytes = parseLong(firstMatch(BYTES_PATTERN, rawMessage, 1));
 
+        boolean isExplicitIocFormat = rawMessage.startsWith("DOMAIN,") || rawMessage.startsWith("URL,") || rawMessage.startsWith("IP,") || rawMessage.startsWith("MALWARE_HASH,");
+        
+        if (isExplicitIocFormat) {
+            String[] parts = rawMessage.split(",");
+            String iocType = parts.length > 0 ? parts[0].trim().toUpperCase() : "DOMAIN";
+            String iocValue = parts.length > 1 ? parts[1].trim() : "";
+            String iocDesc = parts.length > 2 ? parts[2].trim() : "Malicious Indicator";
+            String iocSource = parts.length > 3 ? parts[3].trim() : "Log Ingestion Engine";
+
+            if (StringUtils.hasText(iocValue) && !threatIntelRepository.existsByTypeAndValue(iocType, iocValue)) {
+                ThreatIntel intel = ThreatIntel.builder()
+                        .type(iocType)
+                        .value(iocValue)
+                        .description(iocDesc)
+                        .source(iocSource)
+                        .createdAt(LocalDateTime.now())
+                        .updatedAt(LocalDateTime.now())
+                        .build();
+                threatIntelRepository.save(intel);
+                auditLogService.log("system", "system@sentinelcore.local", "THREAT_INTEL_AUTO_BLOCKED", "THREAT_INTEL",
+                        "Auto-blocked " + iocType + " [" + iocValue + "] under Threat Intel from log ingestion");
+            }
+        }
+
         Optional<Asset> asset = StringUtils.hasText(ipAddress)
                 ? assetRepository.findByIpAddress(ipAddress)
                 : Optional.empty();
@@ -127,10 +196,33 @@ public class SecurityLogService {
         List<ThreatIntel> iocs = threatIntelRepository.findAll();
         boolean iocHit = iocs.stream()
                 .anyMatch(ioc -> StringUtils.hasText(ioc.getValue()) && rawMessage.toLowerCase().contains(ioc.getValue().toLowerCase()));
-        boolean keywordHit = containsAny(rawMessage.toLowerCase(), List.of("failed", "denied", "malware", "blocked", "exploit", "bruteforce", "unauthorized"));
-        boolean anomaly = iocHit || keywordHit;
-        double riskScore = iocHit ? 0.95 : keywordHit ? 0.72 : asset.map(this::assetRiskScore).orElse(0.18);
-        double confidenceScore = anomaly ? 0.88 : 0.61;
+        
+        boolean sqlInjection = matchesAny(rawMessage, SQL_INJECTION_PATTERNS);
+        boolean ransomware = matchesAny(rawMessage, RANSOMWARE_PATTERNS);
+        boolean bruteForceSignal = matchesAny(rawMessage, FAILED_LOGIN_PATTERNS);
+        
+        List<String> privEscalationKeywords = List.of("sudo failed", "root access denied");
+        boolean privEscalation = containsAny(rawMessage.toLowerCase(), privEscalationKeywords);
+        
+        boolean largeDataTransfer = bytes != null && bytes > 1_000_000_000L;
+        
+        List<String> threatKeywords = List.of(
+                "phishing", "malicious", "ransomware", "stealer", "c2", "darkweb", "exfil",
+                "proxy", "dropper", "webshell", "backdoor", "beacon", "harvester", "attack",
+                "exploit", "trojan", "keylogger", "botnet", "failed", "denied", "blocked", "unauthorized"
+        );
+        boolean threatKeywordHit = containsAny(rawMessage.toLowerCase(), threatKeywords);
+        
+        boolean anomaly = isExplicitIocFormat || threatKeywordHit || iocHit || sqlInjection || ransomware || bruteForceSignal || privEscalation || largeDataTransfer;
+        
+        double riskScore = (isExplicitIocFormat || ransomware) ? 0.96 :
+                           (iocHit || threatKeywordHit) ? 0.95 :
+                           sqlInjection ? 0.92 :
+                           privEscalation ? 0.90 :
+                           largeDataTransfer ? 0.85 :
+                           bruteForceSignal ? 0.78 : asset.map(this::assetRiskScore).orElse(0.18);
+        
+        double confidenceScore = anomaly ? 0.95 : 0.61;
 
         return SecurityLog.builder()
                 .timestamp(extractTimestamp(rawMessage))
@@ -210,6 +302,10 @@ public class SecurityLogService {
 
     private boolean containsAny(String value, List<String> keywords) {
         return keywords.stream().anyMatch(value::contains);
+    }
+
+    private boolean matchesAny(String value, List<Pattern> patterns) {
+        return patterns.stream().anyMatch(pattern -> pattern.matcher(value).find());
     }
 
     private double assetRiskScore(Asset asset) {
